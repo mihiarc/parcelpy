@@ -1,15 +1,8 @@
 """
-Visualization package for land use change analysis results.
-Contains modules for different visualization types including:
-- Sankey diagrams
-- Choropleth maps
-- Stacked bar charts
-- Matrix plots
-- Bubble plots
-- Time series plots
-- Size distribution plots
-- Network graphs
+Visualization package for land use change analysis.
 """
+
+__version__ = '0.1.0'
 
 from . import (
     sankey,

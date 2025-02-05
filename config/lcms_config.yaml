@@ -1,0 +1,32 @@
+# LCMS-specific configuration
+
+# Land use classes
+land_use_classes:
+  1: "Agriculture"
+  2: "Developed"
+  3: "Forest"
+  4: "Non-Forest Wetland"
+  5: "Other"
+  6: "Rangeland/Pasture"
+  7: "Non-Processing Area"
+
+# Land use colors for visualization
+land_use_colors:
+  1: "#efff6b"  # Agriculture
+  2: "#ff2ff8"  # Developed
+  3: "#1b9d0c"  # Forest
+  4: "#97ffff"  # Non-Forest Wetland
+  5: "#a1a1a1"  # Other
+  6: "#c2b34a"  # Rangeland/Pasture
+  7: "#1b1716"  # Non-Processing Area
+
+# LCMS dataset configuration
+dataset:
+  collection_id: "USFS/GTAC/LCMS/v2023-9"
+  start_year: 1985
+  end_year: 2023
+  time_step: 1 # annual time series
+  bands:
+    - "Land_Use"
+    - "Land_Cover"
+    - "Change"

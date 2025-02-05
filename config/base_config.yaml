@@ -1,0 +1,21 @@
+# Base configuration for GEE-LCMS project
+
+# Project paths
+paths:
+  data_dir: "data"
+  output_dir: "outputs"
+  test_data_dir: "tests/data"
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "gee_lcms.log"
+
+# General settings
+settings:
+  debug_mode: false
+  cache_enabled: true
+  cache_dir: ".cache"
+  max_retries: 3
+  timeout_seconds: 300 

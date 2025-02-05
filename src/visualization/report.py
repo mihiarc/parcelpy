@@ -4,9 +4,21 @@ Module for creating a visual comparison of land area units.
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from pathlib import Path
+
+# Define default output directory
+DEFAULT_OUTPUT_DIR = Path("outputs/figures")
 
 def create_area_comparison(output_path=None):
     """Create a visual comparison between a hectare and an acre."""
+    # Create default output path if none provided
+    if output_path is None:
+        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = DEFAULT_OUTPUT_DIR / 'area_unit_comparison.png'
+    else:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # Create figure and axis with extra space for labels
     fig, ax = plt.subplots(figsize=(14, 10))
     
@@ -105,11 +117,8 @@ def create_area_comparison(output_path=None):
     plt.tight_layout()
     
     # Save if output path provided
-    if output_path:
-        plt.savefig(output_path, bbox_inches='tight', dpi=300)
-        plt.close()
-    else:
-        plt.show()
+    plt.savefig(output_path, bbox_inches='tight', dpi=300)
+    plt.close()
 
 if __name__ == "__main__":
     import argparse
@@ -119,8 +128,5 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    # Use default output name if none provided
-    if args.output is None:
-        args.output = 'area_unit_comparison.png'
-        
+    # Use default output path if none provided
     create_area_comparison(args.output) 

@@ -8,27 +8,39 @@ import plotly.graph_objects as go
 from typing import Dict, Optional, Union
 import numpy as np
 
+# Define default output directory
+DEFAULT_OUTPUT_DIR = Path("outputs/figures")
 
 def create_matrix_plot(
     results_path: Union[str, Path],
     output_path: Optional[Union[str, Path]] = None,
     title: str = "Land Use Transition Matrix (2013-2022)",
     colorscale: str = "YlOrRd",
-    log_scale: bool = True
+    log_scale: bool = True,
+    dpi: int = 300
 ) -> go.Figure:
     """
     Create a matrix plot showing land use transitions.
     
     Args:
         results_path: Path to the land use changes CSV file
-        output_path: Optional path to save the HTML plot
+        output_path: Optional path to save the PNG plot
         title: Title for the plot
         colorscale: Plotly colorscale to use
         log_scale: Whether to use log scale for color intensity
+        dpi: Resolution of the output image
         
     Returns:
         Plotly figure object
     """
+    # Create default output path if none provided
+    if output_path is None:
+        DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = DEFAULT_OUTPUT_DIR / 'land_use_transitions_matrix.png'
+    else:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     # Read the results
     df = pd.read_csv(results_path)
     
@@ -74,6 +86,8 @@ def create_matrix_plot(
         yaxis_title="2013 Land Use",
         width=800,
         height=800,
+        font=dict(size=12),  # Increase font size for better readability in PNG
+        margin=dict(t=100)  # Add more margin for title
     )
     
     # Make sure axes labels are visible
@@ -84,9 +98,9 @@ def create_matrix_plot(
         colorbar_title="Area (ha)" if not log_scale else "Log Area (ha)"
     )
     
-    # Save if output path provided
+    # Save as PNG
     if output_path:
-        fig.write_html(output_path)
+        fig.write_image(str(output_path), scale=2)  # scale=2 for higher quality
     
     return fig
 
@@ -96,10 +110,11 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Create matrix plot from land use change results")
     parser.add_argument("results_path", type=str, help="Path to land use changes CSV file")
-    parser.add_argument("--output", "-o", type=str, help="Path to save HTML plot", default=None)
+    parser.add_argument("--output", "-o", type=str, help="Path to save PNG plot", default=None)
     parser.add_argument("--title", type=str, help="Plot title", default="Land Use Transition Matrix (2013-2022)")
     parser.add_argument("--colorscale", type=str, default="YlOrRd", help="Plotly colorscale to use")
     parser.add_argument("--no-log", action="store_false", dest="log_scale", help="Disable log scale")
+    parser.add_argument("--dpi", type=int, default=300, help="Output image resolution")
     
     args = parser.parse_args()
     
@@ -109,7 +124,8 @@ if __name__ == "__main__":
         args.output,
         args.title,
         args.colorscale,
-        args.log_scale
+        args.log_scale,
+        args.dpi
     )
     
     # Show the plot if no output path specified

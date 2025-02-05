@@ -9,4 +9,6 @@ folium==0.15.1
 contextily==1.4.0
 rasterio==1.3.9
 pyproj==3.6.1
-earthengine-api==0.1.379 
+earthengine-api==0.1.379
+pyyaml==6.0.1
+python-dotenv==1.0.0 

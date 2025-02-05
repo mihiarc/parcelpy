@@ -1,0 +1,17 @@
+[
+    {
+        "name": "Itasca",
+        "parcels": "data/itasca/parcels.parquet",
+        "results": "outputs/itasca/land_use_changes.csv"
+    },
+    {
+        "name": "St. Louis",
+        "parcels": "data/st_louis/parcels.parquet",
+        "results": "outputs/st_louis/land_use_changes.csv"
+    },
+    {
+        "name": "Lake",
+        "parcels": "data/lake/parcels.parquet",
+        "results": "outputs/lake/land_use_changes.csv"
+    }
+] 

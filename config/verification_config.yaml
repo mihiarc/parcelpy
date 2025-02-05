@@ -1,0 +1,36 @@
+# Configuration for the Land Area Verification module
+
+verification:
+  # Maximum allowed difference between input and output areas (percentage)
+  area_tolerance_pct: 0.1
+  
+  # Minimum proportion threshold for reporting land use types
+  min_proportion_threshold: 0.001
+  
+  # CRS for area calculations (UTM Zone 15N - Minnesota)
+  crs: "EPSG:26915"
+  
+  # Years to analyze
+  years:
+    - 2013
+    - 2022
+
+output:
+  # Output format options: json, csv
+  report_format: "json"
+  
+  # Include warning messages in report
+  include_warnings: true
+  
+  # Save intermediate calculation results
+  save_intermediates: false
+  
+  # Output directory structure
+  directories:
+    reports: "outputs/verification/reports"
+    tables: "outputs/verification/tables"
+    figures: "outputs/verification/figures"
+
+logging:
+  level: "INFO"
+  file: "outputs/verification/verification.log" 

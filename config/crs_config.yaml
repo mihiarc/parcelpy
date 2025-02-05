@@ -1,0 +1,42 @@
+# CRS (Coordinate Reference System) configuration
+
+crs:
+  # Input data CRS (WGS 84)
+  input: "EPSG:4326"
+  
+  # Processing CRS (UTM Zone 15N - Minnesota)
+  # Used for accurate area calculations and analysis
+  processing: "EPSG:26915"
+  
+  # Earth Engine CRS (Web Mercator)
+  # Required for Earth Engine operations
+  ee: "EPSG:3857"
+  
+  # Output CRS (UTM Zone 15N - Minnesota)
+  # Used for final results and visualizations
+  output: "EPSG:26915"
+
+validation:
+  # Whether to validate CRS at each pipeline stage
+  validate_stages: true
+  
+  # Whether to automatically fix incorrect CRS
+  auto_fix: true
+  
+  # Whether to raise errors on CRS mismatches
+  strict: false
+  
+  # Stages that require strict CRS validation
+  strict_stages:
+    - processing  # Area calculations must be in correct CRS
+    - ee         # Earth Engine operations require Web Mercator
+
+logging:
+  # Whether to log CRS transformations
+  log_transforms: true
+  
+  # Whether to log area calculation CRS checks
+  log_area_checks: true
+  
+  # Log level for CRS operations
+  level: "INFO" 

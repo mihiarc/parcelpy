@@ -12,6 +12,8 @@ setup(
         "matplotlib",
         "contextily",
         "numpy",
+        "pyyaml",
+        "python-dotenv",
     ],
     python_requires='>=3.7',
 ) 

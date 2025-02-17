@@ -2,12 +2,52 @@
 
 A pipeline for analyzing land use changes using Google Earth Engine's LCMS (Landscape Change Monitoring System) dataset.
 
-## Land-use change logic rules
+## Land-use Change Analysis Rules
 
+### Core Rules
 1. Land-use change definition: A change in the land-use class of a parcel from one year to another.
 2. Fixed total area: Total land area is constant across time periods.
 3. Zero net change: The total net change in area sums to zero.
 4. Complete proportions: The proportions of land-use classes in a spatial unit sum to 1.
+
+### Resolution Rules
+1. **Large Parcel Processing** (>900 m²)
+   - LCMS Resolution: 30m x 30m (900 m²)
+   - For parcels intersecting multiple pixels:
+     * Use mode (most frequent value) of land use classifications
+     * Track pixel count for quality assessment
+     * Results include:
+       - Dominant land use class (mode)
+       - Total pixel count
+
+2. **Sub-Resolution Handling** (<900 m²)
+   - For parcels smaller than 900 m² (0.222 acres)
+   - Area-weighted Classification Strategy:
+     * Create area image using ee.Image.pixelArea()
+     * Add land use as a band to area image
+     * Group and sum areas by land use category
+     * Calculate percentage of total area for each category
+     * Assign the land use category with largest area coverage
+     * Results include:
+       - Dominant land use class
+       - Area percentage of dominant class
+       - Pixel count set to 1 (sub-resolution indicator)
+
+### Quality Metrics
+1. **Large Parcels**
+   - Mode confidence (percentage of dominant class)
+   - Pixel count and coverage
+   - Secondary class percentages
+
+2. **Sub-Resolution Parcels**
+   - Dominant category coverage percentage
+   - Secondary category coverage percentage
+   - Number of unique intersecting categories
+
+3. **Common Quality Flags**
+   - LOW_CONFIDENCE: No category has >40% coverage
+   - MIXED_USE: Multiple categories have similar coverage
+   - COMPLEX_SHAPE: Many pixel intersections for size
 
 ## Pipeline Diagram
 ```mermaid
@@ -70,6 +110,10 @@ The pipeline consists of several key components:
    - Generates statistics and reports
    - Handles data export
 
+## Performance Considerations
+
+For detailed information about performance optimization, chunk size configuration, and scaling strategies, please refer to `docs/scaling_strategy.md`.
+
 ## Geometry Preprocessing
 
 The pipeline uses a two-stage approach for handling geometries:
@@ -101,7 +145,7 @@ Key configuration files:
 
 1. Set up environment:
    ```bash
-   export EE_PROJECT_ID="your-project-id"
+   export EE_PROJECT_ID="ee-chrismihiar"
    ```
 
 2. Run the pipeline:
@@ -130,45 +174,6 @@ Geometries filtered out during preprocessing may need special handling:
    - Verify if they're actual parcels or artifacts
    - Consider merging with adjacent parcels
 
-## Output File Size and Chunk Size Optimization
-
-The pipeline processes data in chunks to handle Earth Engine's limitations. Based on empirical testing and Earth Engine constraints:
-
-1. **Earth Engine Constraints**
-   - Maximum payload size: 10MB for any single Earth Engine request
-   - This limit applies to both input geometries and output results
-   - Complex geometries consume more payload space than simple ones
-   - Properties (attributes) also contribute to payload size
-
-2. **File Size Patterns**
-   - Each chunk of 1000 features produces a CSV file between 250KB-1.5MB
-   - File size varies based on geometry complexity and property count
-   - Average file size is ~600KB per 1000 features
-   - Output file size ≈ 0.6-1.5x input geometry size due to added properties
-≈
-3. **Chunk Size Optimization**
-   - Default chunk size: 1000 features
-   - Rule of thumb: If input geometries for 1000 features > 5MB, reduce chunk size
-   - Safe chunk sizes based on input geometry size:
-     * Simple geometries (< 5KB each): 1000 features/chunk
-     * Medium geometries (5-10KB each): 500-700 features/chunk
-     * Complex geometries (> 10KB each): 200-400 features/chunk
-
-4. **Performance Optimization**
-   - Monitor Earth Engine task memory usage
-   - If seeing "Payload size exceeded" errors:
-     * First try reducing chunk size
-     * If still failing, simplify geometries
-   - Balance between:
-     * Larger chunks = fewer API calls but higher memory usage
-     * Smaller chunks = more API calls but lower memory usage
-
-5. **Storage Planning**
-   - Estimate output storage: ~0.6MB per 1000 features
-   - Example: 100,000 features ≈ 60MB total output
-   - Add 50% buffer for complex geometries
-   - Plan storage capacity based on your input data size
-
 ## Testing
 
 Run tests with:
@@ -180,3 +185,15 @@ Tests include:
 - Area calculation validation
 - Geometry preprocessing checks
 - End-to-end pipeline testing 
+
+## Output Format
+
+### CSV Columns
+- `parcel_id`: Unique identifier for each parcel
+- `landuse_YYYY`: Land use classification for each year
+- `pixel_count`: Number of LCMS pixels intersecting the parcel
+- `sub_resolution_flag`: Boolean indicating if parcel is smaller than LCMS resolution
+- `dominant_category_pct`: Percentage of parcel covered by assigned category
+- `secondary_category_pct`: Percentage of parcel covered by second most common category
+- `unique_classes`: Number of unique land use classes in intersecting pixels
+- `quality_flags`: Flags indicating potential quality issues 

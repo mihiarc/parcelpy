@@ -6,6 +6,47 @@ Scale up the parcel land use tracking pipeline to efficiently process:
 2. Full LCMS time series (1985-2023)
 3. Optimize Earth Engine server-side processing
 
+## Processing Constraints and Optimization
+
+### Earth Engine Constraints
+- Maximum payload size: 10MB for any single Earth Engine request
+- This limit applies to both input geometries and output results
+- Complex geometries consume more payload space than simple ones
+- Properties (attributes) also contribute to payload size
+
+### Memory Management
+- Dynamic chunk size calculation based on:
+  * Average parcel size in pixels
+  * Number of years in time series
+  * Earth Engine memory limits (~4GB target per chunk)
+- File size patterns:
+  * Each chunk of 1000 features produces ~250KB-1.5MB CSV files
+  * Average file size is ~600KB per 1000 features
+  * Output file size ≈ 0.6-1.5x input geometry size
+- Storage planning:
+  * Estimate output storage: ~0.6MB per 1000 features
+  * Example: 100,000 features ≈ 60MB total output
+  * Add 50% buffer for complex geometries
+
+### Chunk Size Optimization
+```python
+def _calculate_optimal_chunk_size(self, county_parcels: gpd.GeoDataFrame) -> int:
+    """Calculate optimal chunk size based on county characteristics."""
+    avg_pixels = county_parcels.area_m2.mean() / (LCMS_RESOLUTION * LCMS_RESOLUTION)
+    memory_per_parcel = avg_pixels * len(self.years) * 8  # 8 bytes per pixel
+    
+    # Target ~4GB memory usage per chunk (half of EE limit)
+    optimal_size = int(4e9 / memory_per_parcel)
+    
+    # Bound the chunk size
+    return min(max(1000, optimal_size), self.chunk_size)
+```
+
+Recommended chunk sizes based on geometry complexity:
+- Simple geometries (< 5KB each): 1000 features/chunk
+- Medium geometries (5-10KB each): 500-700 features/chunk
+- Complex geometries (> 10KB each): 200-400 features/chunk
+
 ## Server-Side Processing Optimizations
 
 ### 1. Feature Collection Batch Processing
@@ -29,21 +70,7 @@ def process_county(self, county_parcels: gpd.GeoDataFrame):
     return self._monitor_tasks(tasks)
 ```
 
-### 2. Memory-Optimized Chunking
-```python
-def _calculate_optimal_chunk_size(self, county_parcels: gpd.GeoDataFrame) -> int:
-    """Calculate optimal chunk size based on county characteristics."""
-    avg_pixels = county_parcels.area_m2.mean() / (LCMS_RESOLUTION * LCMS_RESOLUTION)
-    memory_per_parcel = avg_pixels * len(self.years) * 8  # 8 bytes per pixel
-    
-    # Target ~4GB memory usage per chunk (half of EE limit)
-    optimal_size = int(4e9 / memory_per_parcel)
-    
-    # Bound the chunk size
-    return min(max(1000, optimal_size), self.chunk_size)
-```
-
-### 3. Efficient Time Series Processing
+### 2. Efficient Time Series Processing
 ```python
 def _process_large_parcel_timeseries(self, geometry: ee.Geometry, lcms_series: ee.ImageCollection) -> ee.Dictionary:
     """Process a large parcel for the entire time series."""
@@ -77,35 +104,26 @@ def _process_large_parcel_timeseries(self, geometry: ee.Geometry, lcms_series: e
     )
 ```
 
-### 4. Sub-Resolution Parcel Handling
-- Area-weighted classification for parcels < 900 m²
-- Server-side area calculations and aggregation
-- Efficient handling of partial pixel coverage
-
-## Implementation Details
-
-### 1. Server-Side Optimizations
+### 3. Server-Side Optimizations
 - Use of `ee.Filter.calendarRange()` for efficient year filtering
 - Combined reducers to minimize server requests
 - Server-side dictionary creation with `ee.Dictionary.fromLists()`
 - All temporal operations kept within Earth Engine environment
 
-### 2. Memory Management
-- Dynamic chunk size calculation based on:
-  * Average parcel size in pixels
-  * Number of years in time series
-  * Earth Engine memory limits
-- Bounded chunk sizes (1,000 - 10,000 parcels)
-- Efficient memory usage (~4GB per chunk)
+### 4. Sub-Resolution Parcel Handling
+- Area-weighted classification for parcels < 900 m²
+- Server-side area calculations and aggregation
+- Efficient handling of partial pixel coverage
 
-### 3. Export Management
+## Performance Monitoring and Error Handling
+
+### Task Management
 ```python
-def _monitor_tasks(self, tasks: List[ee.batch.Task], retry_failed: bool = True):
-    """Monitor and manage export tasks with retry logic."""
+def _monitor_tasks(self, tasks: List[ee.batch.Task]):
+    """Monitor and manage export tasks."""
     active_tasks = tasks.copy()
     completed_tasks = []
     failed_tasks = []
-    retry_counts = {task.status()['id']: 0 for task in tasks}
     
     while active_tasks:
         # Monitor task status
@@ -114,37 +132,31 @@ def _monitor_tasks(self, tasks: List[ee.batch.Task], retry_failed: bool = True):
             if status['state'] == 'COMPLETED':
                 completed_tasks.append(task)
             elif status['state'] in ['FAILED', 'CANCELLED']:
-                # Implement retry logic
-                if retry_failed and retry_counts[status['id']] < MAX_RETRIES:
-                    retry_counts[status['id']] += 1
-                    task.start()
-                else:
-                    failed_tasks.append(task)
+                failed_tasks.append(task)
+                logger.error(
+                    f"Task {status['description']} failed: "
+                    f"{status.get('error_message', 'Unknown error')}"
+                )
     
     return completed_tasks, failed_tasks
 ```
 
-## Performance Considerations
+### Performance Optimization Guidelines
+- Monitor Earth Engine task memory usage
+- If seeing "Payload size exceeded" errors:
+  * First try reducing chunk size
+  * If still failing, simplify geometries
+- Balance between:
+  * Larger chunks = fewer API calls but higher memory usage
+  * Smaller chunks = more API calls but lower memory usage
 
-### 1. Time Series Processing
-- Full coverage from 1985-2023 (39 years)
-- Parallel processing of years within Earth Engine
-- Efficient dictionary structure for results
-- Minimized client-server communication
-
-### 2. Error Handling
-- Robust retry logic for failed tasks
-- Maximum retry attempts configurable
-- Detailed error logging and reporting
-- Task status monitoring and management
-
-### 3. Data Quality
+### Data Quality
 - Consistent processing across all years
 - Quality metrics for sub-resolution parcels
 - Validation of temporal consistency
 - Complete time series coverage
 
-## Usage Example
+## Usage Examples
 ```bash
 # Process full time series for test county
 python scripts/process_county_parcels.py \
@@ -179,7 +191,6 @@ python scripts/process_county_parcels.py \
    - Robust task management
 
 3. Reliability
-   - Automatic retry of failed tasks
    - Comprehensive error handling
    - Detailed logging and monitoring
    - Data quality validation 

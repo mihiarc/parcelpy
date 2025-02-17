@@ -4,193 +4,174 @@
 Scale up the parcel land use tracking pipeline to efficiently process:
 1. Large numbers of parcels (county-level datasets)
 2. Full LCMS time series (1985-2023)
-3. Optimize Earth Engine server-side processing
+3. Optimize Earth Engine server-side processing within payload limits
 
 ## Processing Constraints and Optimization
 
 ### Earth Engine Constraints
 - Maximum payload size: 10MB for any single Earth Engine request
-- This limit applies to both input geometries and output results
-- Complex geometries consume more payload space than simple ones
-- Properties (attributes) also contribute to payload size
+- Payload size includes:
+  * Input geometries and their complexity (number of vertices)
+  * Number of features in a FeatureCollection
+  * Properties and metadata associated with features
+  * Filter and function complexity in the request
+- Exceeding payload limit results in request failure
+- Memory limit of ~4GB per computation
 
-### Memory Management
-- Dynamic chunk size calculation based on:
-  * Average parcel size in pixels
-  * Number of years in time series
-  * Earth Engine memory limits (~4GB target per chunk)
-- File size patterns:
-  * Each chunk of 1000 features produces ~250KB-1.5MB CSV files
-  * Average file size is ~600KB per 1000 features
-  * Output file size ≈ 0.6-1.5x input geometry size
-- Storage planning:
-  * Estimate output storage: ~0.6MB per 1000 features
-  * Example: 100,000 features ≈ 60MB total output
-  * Add 50% buffer for complex geometries
+### Chunk Size Strategy
+- Dynamic chunk size based on geometry complexity:
+  * Base chunk size: 100 parcels per request
+  * Reduced to 50 parcels for moderately complex geometries (avg > 100 vertices or max > 150)
+  * Further reduced to 25 parcels for very complex geometries (max > 200 vertices)
+- Rationale:
+  * Adapts to varying parcel complexities
+  * Prevents payload size errors proactively
+  * Balances processing efficiency with reliability
+- Monitoring:
+  * Tracks average and maximum vertex counts per chunk
+  * Logs chunk size decisions for transparency
+  * Records processing success rates
 
-### Chunk Size Optimization
-```python
-def _calculate_optimal_chunk_size(self, county_parcels: gpd.GeoDataFrame) -> int:
-    """Calculate optimal chunk size based on county characteristics."""
-    avg_pixels = county_parcels.area_m2.mean() / (LCMS_RESOLUTION * LCMS_RESOLUTION)
-    memory_per_parcel = avg_pixels * len(self.years) * 8  # 8 bytes per pixel
-    
-    # Target ~4GB memory usage per chunk (half of EE limit)
-    optimal_size = int(4e9 / memory_per_parcel)
-    
-    # Bound the chunk size
-    return min(max(1000, optimal_size), self.chunk_size)
-```
-
-Recommended chunk sizes based on geometry complexity:
-- Simple geometries (< 5KB each): 1000 features/chunk
-- Medium geometries (5-10KB each): 500-700 features/chunk
-- Complex geometries (> 10KB each): 200-400 features/chunk
+### Geometry Optimization
+- Simplify geometries before processing:
+  * Use 1.0 meter tolerance for simplification
+  * Track vertex count statistics (mean, median, max, std)
+  * Log size distribution of parcels
+- Size categories for monitoring:
+  * Sub-resolution parcels (<900m²)
+  * 1-3 pixel parcels (900-2700m²)
+  * 3-9 pixel parcels (2700-8100m²)
+  * Large parcels (>8100m²)
+- Vertex count warnings:
+  * Flags geometries with >100 vertices
+  * Suggests additional simplification if tasks fail
 
 ## Server-Side Processing Optimizations
 
-### 1. Feature Collection Batch Processing
+### 1. Feature Collection Processing
 ```python
 def process_county(self, county_parcels: gpd.GeoDataFrame):
     """Process all parcels in a county for all years."""
-    # Convert to Earth Engine FeatureCollection
-    county_fc = geemap.geopandas_to_ee(county_parcels)
+    # Preprocess and clean properties
+    processed_parcels = self._preprocess_parcels(county_parcels)
     
-    # Calculate optimal chunk size based on memory requirements
-    chunk_size = self._calculate_optimal_chunk_size(county_parcels)
-    num_chunks = (len(county_parcels) + chunk_size - 1) // chunk_size
+    # Calculate vertex counts for chunk size determination
+    vertex_counts = processed_parcels.geometry.apply(count_vertices)
+    chunk_size = self._calculate_chunk_size(vertex_counts)
     
-    # Process chunks and monitor tasks
+    # Process in chunks with dynamic size
+    total_parcels = len(processed_parcels)
+    num_chunks = (total_parcels + chunk_size - 1) // chunk_size
+    
+    # Process each chunk
     tasks = []
-    for i in range(num_chunks):
-        chunk_fc = self._get_chunk(county_fc, i, chunk_size)
-        task = self._process_chunk(chunk_fc, county_parcels.name[0], i)
+    for chunk_idx in range(num_chunks):
+        start_idx = chunk_idx * chunk_size
+        end_idx = min(start_idx + chunk_size, total_parcels)
+        chunk_parcels = processed_parcels.iloc[start_idx:end_idx]
+        
+        # Convert chunk to Earth Engine FeatureCollection
+        chunk_fc = geemap.geopandas_to_ee(chunk_parcels)
+        task = self._process_chunk(chunk_fc, chunk_idx)
         tasks.append(task)
     
-    return self._monitor_tasks(tasks)
+    return tasks
 ```
 
-### 2. Efficient Time Series Processing
-```python
-def _process_large_parcel_timeseries(self, geometry: ee.Geometry, lcms_series: ee.ImageCollection) -> ee.Dictionary:
-    """Process a large parcel for the entire time series."""
-    def process_year(year):
-        # Server-side year filtering
-        image = lcms_series.filter(
-            ee.Filter.calendarRange(year, year, 'year')
-        ).first().select('Land_Use')
-        
-        # Combined reducer for efficiency
-        results = image.reduceRegion(
-            reducer=ee.Reducer.mode().combine(
-                reducer2=ee.Reducer.count(),
-                sharedInputs=True
-            ),
-            geometry=geometry,
-            scale=LCMS_RESOLUTION,
-            maxPixels=1e13
-        )
-        
-        return results.get('Land_Use_mode')
-    
-    # Process all years in parallel on server
-    years = ee.List(self.years)
-    classes = years.map(lambda y: process_year(ee.Number(y)))
-    
-    # Create efficient dictionary structure
-    return ee.Dictionary.fromLists(
-        years.map(lambda y: ee.String(ee.Number(y).format())),
-        classes
-    )
-```
+### 2. Advanced Optimization Strategies
+- Property cleanup before processing:
+  * Remove non-essential columns
+  * Keep only geometry, parcel number, and area
+  * Optimize data types (float32, int32)
+- Year range splitting:
+  * Optional splitting of time series into 2-4 ranges
+  * Processes each range separately
+  * Adds delay between ranges to manage API load
+- Task tracking with detailed metadata:
+  * Chunk indices and size
+  * Number of parcels
+  * Vertex statistics
+  * Processing timestamp
+  * Year range information
 
-### 3. Server-Side Optimizations
-- Use of `ee.Filter.calendarRange()` for efficient year filtering
-- Combined reducers to minimize server requests
-- Server-side dictionary creation with `ee.Dictionary.fromLists()`
-- All temporal operations kept within Earth Engine environment
-
-### 4. Sub-Resolution Parcel Handling
-- Area-weighted classification for parcels < 900 m²
-- Server-side area calculations and aggregation
-- Efficient handling of partial pixel coverage
+### 3. Sub-Resolution Parcel Handling
+- Special processing for parcels < 900 m²
+- Area-weighted classification
+- Efficient partial pixel handling
+- Track sub-resolution parcel statistics
 
 ## Performance Monitoring and Error Handling
 
 ### Task Management
 ```python
-def _monitor_tasks(self, tasks: List[ee.batch.Task]):
-    """Monitor and manage export tasks."""
-    active_tasks = tasks.copy()
-    completed_tasks = []
-    failed_tasks = []
+def process_county_split_years(self, county_parcels, splits=2):
+    """Process county with year range splitting."""
+    year_ranges = self._split_year_ranges(min_year, max_year, splits)
     
-    while active_tasks:
-        # Monitor task status
-        for task in active_tasks[:]:
-            status = task.status()
-            if status['state'] == 'COMPLETED':
-                completed_tasks.append(task)
-            elif status['state'] in ['FAILED', 'CANCELLED']:
-                failed_tasks.append(task)
-                logger.error(
-                    f"Task {status['description']} failed: "
-                    f"{status.get('error_message', 'Unknown error')}"
-                )
+    all_tasks = []
+    for start_year, end_year in year_ranges:
+        # Process each year range
+        tasks = self.process_county(county_parcels)
+        
+        # Add year range info
+        for task in tasks:
+            task['year_range'] = f"{start_year}-{end_year}"
+        
+        all_tasks.extend(tasks)
+        
+        # Add delay between ranges
+        if not last_range:
+            time.sleep(30)
     
-    return completed_tasks, failed_tasks
+    return all_tasks
 ```
 
-### Performance Optimization Guidelines
-- Monitor Earth Engine task memory usage
-- If seeing "Payload size exceeded" errors:
-  * First try reducing chunk size
-  * If still failing, simplify geometries
-- Balance between:
-  * Larger chunks = fewer API calls but higher memory usage
-  * Smaller chunks = more API calls but lower memory usage
+### Troubleshooting Guidelines
+If encountering payload size errors:
+1. First attempt: Let dynamic chunk sizing handle complexity
+2. Second attempt: Enable year range splitting (2-4 splits)
+3. Third attempt: Additional geometry simplification
+4. Last resort: Manual intervention for problematic parcels
 
-### Data Quality
-- Consistent processing across all years
-- Quality metrics for sub-resolution parcels
-- Validation of temporal consistency
-- Complete time series coverage
+### Data Quality Checks
+- Comprehensive geometry statistics:
+  * Vertex count distribution
+  * Size category distribution
+  * Simplification impact metrics
+- Processing validation:
+  * Track success rates by chunk size
+  * Monitor year range splitting effectiveness
+  * Log memory usage throughout processing
 
 ## Usage Examples
 ```bash
-# Process full time series for test county
-python scripts/process_county_parcels.py \
-  --county "TestCounty" \
-  --input data/test/test_county.parquet \
-  --start-year 1985 \
-  --end-year 2023 \
-  --output-folder "LCMS_TestCounty"
+# Process county with dynamic chunk sizing
+python scripts/process_county_parcels_prod.py \
+  --input data/ITAS_parcels_wgs84.parquet \
+  --output-folder "LCMS_Itasca_Production"
 
-# Process specific years for production
-python scripts/process_county_parcels.py \
-  --county "Hennepin" \
-  --input data/counties/hennepin_parcels.parquet \
-  --start-year 1985 \
-  --end-year 2023 \
-  --chunk-size 5000 \
-  --output-folder "LCMS_Hennepin"
+# Process with year range splitting
+python scripts/process_county_parcels_prod.py \
+  --input data/ITAS_parcels_wgs84.parquet \
+  --output-folder "LCMS_Itasca_Production" \
+  --split-years 2
 ```
 
 ## Success Metrics
 
-1. Processing Efficiency
-   - Optimized memory usage (~4GB per chunk)
-   - Parallel processing of years
-   - Minimal client-server communication
-   - Efficient dictionary structures
+1. Processing Reliability
+   - Adaptive chunk sizing effectiveness
+   - Minimal payload size errors
+   - Robust error handling and logging
 
 2. Scalability
-   - Successfully handles full time series (1985-2023)
+   - Handles full time series (1985-2023)
    - Processes large county datasets
-   - Dynamic chunk size optimization
-   - Robust task management
+   - Efficient memory usage
+   - Stays within Earth Engine limits
 
-3. Reliability
-   - Comprehensive error handling
-   - Detailed logging and monitoring
-   - Data quality validation 
+3. Monitoring
+   - Comprehensive task tracking
+   - Detailed geometry statistics
+   - Memory usage profiling
+   - Processing optimization metrics 

@@ -38,11 +38,15 @@ class CountyParcelProcessorProd:
     def __init__(
         self,
         start_year: int = 1985,
-        end_year: int = 2023
+        end_year: int = 2023,
+        county_name: str = None,
+        max_concurrent_tasks: int = 3000
     ):
         """Initialize the processor with time range."""
         self.years = list(range(start_year, end_year + 1))
         self.lcms_collection = None
+        self.county_name = county_name.lower() if county_name else "county"
+        self.max_concurrent_tasks = max_concurrent_tasks
         self.initialize_earth_engine()
         
     def initialize_earth_engine(self):
@@ -171,6 +175,22 @@ class CountyParcelProcessorProd:
     
     def _clean_properties(self, parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Remove unnecessary properties to reduce payload size."""
+        # Create a copy of the dataframe
+        parcels = parcels.copy()
+        
+        # Map PIN to PRCL_NBR if it exists
+        if 'PIN' in parcels.columns and 'PRCL_NBR' not in parcels.columns:
+            parcels['PRCL_NBR'] = parcels['PIN']
+        
+        # Calculate area_m2 from Shape_Area if needed
+        if 'area_m2' not in parcels.columns:
+            if 'Shape_Area' in parcels.columns:
+                # Assuming Shape_Area is in square meters, adjust if it's in different units
+                parcels['area_m2'] = parcels['Shape_Area']
+            elif 'ACRES_POLY' in parcels.columns:
+                # Convert acres to square meters
+                parcels['area_m2'] = parcels['ACRES_POLY'] * 4046.86
+        
         # Keep only essential columns
         essential_columns = ['geometry', 'PRCL_NBR', 'area_m2']
         extra_columns = [col for col in parcels.columns if col not in essential_columns]
@@ -280,10 +300,25 @@ class CountyParcelProcessorProd:
             # Simple geometries - use base size
             return base_chunk_size
 
+    def _wait_for_available_task_slot(self):
+        """Wait until there's an available slot for a new task."""
+        while True:
+            # Only count READY tasks since RUNNING tasks don't count towards the limit
+            pending_tasks = [task for task in ee.batch.Task.list() 
+                           if task.state == 'READY']
+            pending_count = len(pending_tasks)
+            
+            if pending_count < self.max_concurrent_tasks:
+                break
+                
+            logger.info(f"Waiting for task slot (current pending tasks: {pending_count}/{self.max_concurrent_tasks})")
+            time.sleep(30)  # Wait 30 seconds before checking again
+
     def process_county(
         self,
         county_parcels: gpd.GeoDataFrame,
-        output_folder: str
+        output_folder: str,
+        start_chunk: int = 0
     ) -> List[Dict]:
         """Process all parcels in a county for all years."""
         logger.info(f"Processing county with {len(county_parcels)} parcels")
@@ -306,14 +341,20 @@ class CountyParcelProcessorProd:
         # Split parcels into chunks
         total_parcels = len(processed_parcels)
         num_chunks = (total_parcels + chunk_size - 1) // chunk_size
-        logger.info(f"Processing {total_parcels} parcels in {num_chunks} chunks")
+        
+        if start_chunk > 0:
+            logger.info(f"Resuming from chunk {start_chunk} (skipping {start_chunk} chunks)")
+        logger.info(f"Processing {total_parcels} parcels in {num_chunks - start_chunk} remaining chunks")
         
         # Track task submissions
         task_tracking = []
         
         # Process each chunk
-        for chunk_idx in tqdm(range(num_chunks), desc="Processing chunks", unit="chunk"):
+        for chunk_idx in tqdm(range(start_chunk, num_chunks), desc="Processing chunks", unit="chunk"):
             try:
+                # Wait for available task slot
+                self._wait_for_available_task_slot()
+                
                 # Get chunk of parcels
                 start_idx = chunk_idx * chunk_size
                 end_idx = min(start_idx + chunk_size, total_parcels)
@@ -328,9 +369,9 @@ class CountyParcelProcessorProd:
                 # Create and start export task
                 task = ee.batch.Export.table.toDrive(
                     collection=results_fc,
-                    description=f'county_itasca_chunk_{chunk_idx}',
+                    description=f'{self.county_name}_chunk_{chunk_idx}',
                     folder=output_folder,
-                    fileNamePrefix=f'county_itasca_chunk_{chunk_idx}',
+                    fileNamePrefix=f'{self.county_name}_chunk_{chunk_idx}',
                     fileFormat='CSV'
                 )
                 task.start()
@@ -395,7 +436,8 @@ class CountyParcelProcessorProd:
         self,
         county_parcels: gpd.GeoDataFrame,
         output_folder: str,
-        splits: int = 2
+        splits: int = 2,
+        start_chunk: int = 0
     ) -> List[Dict]:
         """Process county with year range splitting for very complex geometries."""
         logger.info(f"Processing county with year splitting ({splits} splits)")
@@ -411,11 +453,13 @@ class CountyParcelProcessorProd:
             # Create processor for this year range
             processor = CountyParcelProcessorProd(
                 start_year=start_year,
-                end_year=end_year
+                end_year=end_year,
+                county_name=self.county_name,
+                max_concurrent_tasks=self.max_concurrent_tasks
             )
             
             # Process this year range
-            tasks = processor.process_county(county_parcels, output_folder)
+            tasks = processor.process_county(county_parcels, output_folder, start_chunk)
             
             # Add year range info to tasks
             for task in tasks:
@@ -476,6 +520,23 @@ def main():
         default=1,
         help="Number of splits for year ranges (1=no split)"
     )
+    parser.add_argument(
+        "--county-name",
+        type=str,
+        help="Name of the county (e.g., 'anoka', 'itasca'). Used in output file names."
+    )
+    parser.add_argument(
+        "--max-concurrent-tasks",
+        type=int,
+        default=3000,
+        help="Maximum number of concurrent Earth Engine tasks (default: 3000)"
+    )
+    parser.add_argument(
+        "--start-chunk",
+        type=int,
+        default=0,
+        help="Start processing from this chunk index (useful for resuming interrupted runs)"
+    )
     
     args = parser.parse_args()
     
@@ -484,13 +545,13 @@ def main():
         input_path = Path(args.input)
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {args.input}")
-        if input_path.name != "ITAS_parcels_wgs84.parquet":
-            raise ValueError(f"Expected input file 'ITAS_parcels_wgs84.parquet', got '{input_path.name}'")
         
         # Initialize processor
         processor = CountyParcelProcessorProd(
             start_year=args.start_year,
-            end_year=args.end_year
+            end_year=args.end_year,
+            county_name=args.county_name,
+            max_concurrent_tasks=args.max_concurrent_tasks
         )
         
         # Load county parcels
@@ -502,12 +563,14 @@ def main():
             task_tracking = processor.process_county_split_years(
                 parcels,
                 args.output_folder,
-                splits=args.split_years
+                splits=args.split_years,
+                start_chunk=args.start_chunk
             )
         else:
             task_tracking = processor.process_county(
                 parcels,
-                args.output_folder
+                args.output_folder,
+                start_chunk=args.start_chunk
             )
         
         # Convert task tracking data to serializable format

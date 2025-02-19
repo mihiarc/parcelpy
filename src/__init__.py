@@ -1,3 +1,0 @@
-"""
-GEE LCMS Analysis Package
-"""

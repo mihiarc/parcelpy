@@ -11,13 +11,6 @@ graph TD
     C --> D[Raw GEE Output]
     D --> E[Land Use Analysis]
     E --> F[Visualizations & Reports]
-
-    style A fill:#e1f5fe,stroke:#01579b
-    style B fill:#e8f5e9,stroke:#1b5e20
-    style C fill:#fff3e0,stroke:#e65100
-    style D fill:#f3e5f5,stroke:#4a148c
-    style E fill:#e8f5e9,stroke:#1b5e20
-    style F fill:#f3e5f5,stroke:#4a148c
 ```
 
 ### Core Components

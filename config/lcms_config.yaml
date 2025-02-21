@@ -1,6 +1,6 @@
 # LCMS-specific configuration
 
-# Land use classes
+# Original LCMS land use classes
 land_use_classes:
   1: "Agriculture"
   2: "Developed"
@@ -19,6 +19,39 @@ land_use_colors:
   5: "#a1a1a1"  # Other
   6: "#c2b34a"  # Rangeland/Pasture
   7: "#1b1716"  # Non-Processing Area
+
+# Analysis class groupings
+analysis_classes:
+  1:  # Agriculture (combined with Rangeland/Pasture)
+    name: "Agriculture"
+    color: "#ffd700"
+    description: "Agricultural land including cropland and pasture/rangeland"
+    min_area_threshold: 900  # Minimum area in m² for reliable classification
+    includes:
+      - 1  # Agriculture
+      - 6  # Rangeland/Pasture
+  2:  # Developed
+    name: "Developed"
+    color: "#ff4444"
+    description: "Urban and developed areas"
+    min_area_threshold: 900
+    includes:
+      - 2  # Developed
+  3:  # Forest (combined with Non-Forest Wetland)
+    name: "Forest"
+    color: "#228b22"
+    description: "Forest and woodland areas"
+    min_area_threshold: 900
+    includes:
+      - 3  # Forest
+      - 4  # Non-Forest Wetland
+  4: # Other
+    name: "Other"
+    color: "#a1a1a1"
+    description: "Other land use classes"
+    min_area_threshold: 900
+    includes:
+      - 5  # Other
 
 # LCMS dataset configuration
 dataset:

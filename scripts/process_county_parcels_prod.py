@@ -1,7 +1,46 @@
 #!/usr/bin/env python3
 """
-Production version of county parcel processor for GEE.
-Focuses on efficient task submission to Earth Engine.
+This script processes county parcel data using Google Earth Engine (GEE) for land use analysis.
+
+Key components:
+
+1. Imports and Setup
+   - Uses Earth Engine (ee), pandas, geopandas for geospatial processing
+   - Configures logging to track execution
+   - Includes memory usage monitoring
+
+2. CountyParcelProcessorProd Class
+   - Main class for processing county parcel datasets
+   - Parameters:
+     * start_year/end_year: Analysis time period (default 1985-2023)
+     * county_name: Name of county being processed
+     * max_concurrent_tasks: Limit on simultaneous GEE tasks (max is 3000)
+     * chunk_size: Number of parcels to process in each chunk (default: 50)
+
+3. Key Methods:
+   - initialize_earth_engine(): Sets up GEE connection and loads data
+   - process_county(): Main method to process all parcels
+   - _preprocess_parcels(): Prepares parcel data for analysis
+   - _calculate_chunk_size(): Determines optimal batch size
+   - _wait_for_available_task_slot(): Manages GEE task queue
+
+4. Processing Approach:
+   - Splits parcels into manageable chunks
+   - Processes each chunk in parallel via GEE
+   - Tracks memory usage and task status
+   - Includes error handling and logging
+
+5. Output:
+   - Generates analysis results for each parcel
+   - Tracks land use changes over time
+   - Provides detailed logging and progress updates
+
+This production version is optimized for:
+- Memory efficiency with large datasets
+- Reliable GEE task management
+- Detailed progress tracking and logging
+- Error handling and recovery options
+
 """
 
 import ee
@@ -40,13 +79,15 @@ class CountyParcelProcessorProd:
         start_year: int = 1985,
         end_year: int = 2023,
         county_name: str = None,
-        max_concurrent_tasks: int = 3000
+        max_concurrent_tasks: int = 3000,
+        chunk_size: int = 50
     ):
         """Initialize the processor with time range."""
         self.years = list(range(start_year, end_year + 1))
         self.lcms_collection = None
         self.county_name = county_name.lower() if county_name else "county"
         self.max_concurrent_tasks = max_concurrent_tasks
+        self.chunk_size = chunk_size
         self.initialize_earth_engine()
         
     def initialize_earth_engine(self):
@@ -209,19 +250,18 @@ class CountyParcelProcessorProd:
         # Create copy and clean properties
         processed_parcels = self._clean_properties(county_parcels)
         
-        # Convert to more efficient data types where possible
-        logger.info("Optimizing data types...")
-        for col in processed_parcels.columns:
-            if col != 'geometry':
-                col_data = processed_parcels[col]
-                if col_data.dtype == 'float64':
-                    processed_parcels[col] = col_data.astype('float32')
-                elif col_data.dtype == 'int64':
-                    processed_parcels[col] = col_data.astype('int32')
-        
         # Simplify geometries with progress bar
         logger.info("Simplifying geometries...")
         total_parcels = len(processed_parcels)
+        
+        # Remove null geometries
+        null_geoms = processed_parcels.geometry.isna()
+        if null_geoms.any():
+            n_nulls = null_geoms.sum()
+            logger.warning(f"Removing {n_nulls} parcels with null geometries")
+            processed_parcels = processed_parcels[~null_geoms].copy()
+            total_parcels = len(processed_parcels)
+        
         simplified_geoms = []
         
         for geom in tqdm(processed_parcels.geometry, 
@@ -231,31 +271,6 @@ class CountyParcelProcessorProd:
             simplified_geoms.append(geom.simplify(1.0))
         
         processed_parcels['geometry'] = simplified_geoms
-        
-        # Calculate and log geometry statistics
-        logger.info("Calculating geometry statistics...")
-        def count_vertices(geom):
-            """Count vertices in a geometry, handling both Polygon and MultiPolygon."""
-            if geom.geom_type == 'Polygon':
-                return len(geom.exterior.coords)
-            elif geom.geom_type == 'MultiPolygon':
-                return sum(len(poly.exterior.coords) for poly in geom.geoms)
-            return 0
-
-        vertex_counts = processed_parcels.geometry.apply(count_vertices)
-        
-        stats = {
-            'mean_vertices': vertex_counts.mean(),
-            'median_vertices': vertex_counts.median(),
-            'max_vertices': vertex_counts.max(),
-            'min_vertices': vertex_counts.min(),
-            'std_vertices': vertex_counts.std(),
-            'total_vertices': vertex_counts.sum()
-        }
-        
-        logger.info("Geometry statistics:")
-        for stat, value in stats.items():
-            logger.info(f"  - {stat}: {value:.1f}")
         
         # Calculate size distribution
         size_distribution = np.histogram(processed_parcels.area_m2, 
@@ -267,39 +282,9 @@ class CountyParcelProcessorProd:
         logger.info(f"  - 3-9 pixels: {size_distribution[0][2]:,} parcels")
         logger.info(f"  - >9 pixels: {size_distribution[0][3]:,} parcels")
         
-        # Add warning if any geometries are too complex
-        max_vertices_warning = 100  # Warning threshold for vertex count
-        complex_geoms = vertex_counts[vertex_counts > max_vertices_warning]
-        if not complex_geoms.empty:
-            logger.warning(
-                f"Found {len(complex_geoms)} geometries with >100 vertices. "
-                f"Max vertices: {complex_geoms.max():.0f}. "
-                "Consider additional simplification if tasks fail."
-            )
-        
         log_memory_usage()
         return processed_parcels
     
-    def _calculate_chunk_size(self, vertex_counts: pd.Series) -> int:
-        """Calculate safe chunk size based on geometry complexity."""
-        # Base chunk size of 100
-        base_chunk_size = 100
-        
-        # Calculate average vertices per geometry
-        avg_vertices = vertex_counts.mean()
-        max_vertices = vertex_counts.max()
-        
-        # Adjust chunk size based on complexity
-        if max_vertices > 200:
-            # Very complex geometries - be conservative
-            return 25
-        elif avg_vertices > 100 or max_vertices > 150:
-            # Moderately complex - reduce chunk size
-            return 50
-        else:
-            # Simple geometries - use base size
-            return base_chunk_size
-
     def _wait_for_available_task_slot(self):
         """Wait until there's an available slot for a new task."""
         while True:
@@ -317,7 +302,6 @@ class CountyParcelProcessorProd:
     def process_county(
         self,
         county_parcels: gpd.GeoDataFrame,
-        output_folder: str,
         start_chunk: int = 0
     ) -> List[Dict]:
         """Process all parcels in a county for all years."""
@@ -326,17 +310,9 @@ class CountyParcelProcessorProd:
         # Preprocess parcels
         processed_parcels = self._preprocess_parcels(county_parcels)
         
-        # Calculate vertex counts for chunk size determination
-        def count_vertices(geom):
-            if geom.geom_type == 'Polygon':
-                return len(geom.exterior.coords)
-            elif geom.geom_type == 'MultiPolygon':
-                return sum(len(poly.exterior.coords) for poly in geom.geoms)
-            return 0
-        
-        vertex_counts = processed_parcels.geometry.apply(count_vertices)
-        chunk_size = self._calculate_chunk_size(vertex_counts)
-        logger.info(f"Using chunk size of {chunk_size} based on geometry complexity")
+        # Use configured chunk size
+        chunk_size = self.chunk_size
+        logger.info(f"Using chunk size of {chunk_size}")
         
         # Split parcels into chunks
         total_parcels = len(processed_parcels)
@@ -370,7 +346,7 @@ class CountyParcelProcessorProd:
                 task = ee.batch.Export.table.toDrive(
                     collection=results_fc,
                     description=f'{self.county_name}_chunk_{chunk_idx}',
-                    folder=output_folder,
+                    folder='GEE_LCMS_Exports',  # Using standard folder from config
                     fileNamePrefix=f'{self.county_name}_chunk_{chunk_idx}',
                     fileFormat='CSV'
                 )
@@ -386,8 +362,6 @@ class CountyParcelProcessorProd:
                     'task_id': task.id,
                     'status': 'submitted',
                     'chunk_size': chunk_size,
-                    'avg_vertices': vertex_counts[start_idx:end_idx].mean(),
-                    'max_vertices': vertex_counts[start_idx:end_idx].max(),
                     'timestamp': datetime.now().isoformat()
                 })
                 
@@ -407,72 +381,10 @@ class CountyParcelProcessorProd:
                     'status': 'failed',
                     'error': str(e),
                     'chunk_size': chunk_size,
-                    'avg_vertices': vertex_counts[start_idx:end_idx].mean(),
-                    'max_vertices': vertex_counts[start_idx:end_idx].max(),
                     'timestamp': datetime.now().isoformat()
                 })
         
         return task_tracking
-
-    def _split_year_ranges(self, start_year: int, end_year: int, splits: int = 2) -> List[Tuple[int, int]]:
-        """Split the year range into smaller chunks."""
-        total_years = end_year - start_year + 1
-        years_per_split = total_years // splits
-        
-        ranges = []
-        current_start = start_year
-        for i in range(splits):
-            if i == splits - 1:
-                # Last split gets any remaining years
-                ranges.append((current_start, end_year))
-            else:
-                current_end = current_start + years_per_split - 1
-                ranges.append((current_start, current_end))
-                current_start = current_end + 1
-        
-        return ranges
-
-    def process_county_split_years(
-        self,
-        county_parcels: gpd.GeoDataFrame,
-        output_folder: str,
-        splits: int = 2,
-        start_chunk: int = 0
-    ) -> List[Dict]:
-        """Process county with year range splitting for very complex geometries."""
-        logger.info(f"Processing county with year splitting ({splits} splits)")
-        
-        # Get year ranges
-        year_ranges = self._split_year_ranges(min(self.years), max(self.years), splits)
-        logger.info(f"Split years into ranges: {year_ranges}")
-        
-        all_tasks = []
-        for start_year, end_year in year_ranges:
-            logger.info(f"Processing years {start_year}-{end_year}")
-            
-            # Create processor for this year range
-            processor = CountyParcelProcessorProd(
-                start_year=start_year,
-                end_year=end_year,
-                county_name=self.county_name,
-                max_concurrent_tasks=self.max_concurrent_tasks
-            )
-            
-            # Process this year range
-            tasks = processor.process_county(county_parcels, output_folder, start_chunk)
-            
-            # Add year range info to tasks
-            for task in tasks:
-                task['year_range'] = f"{start_year}-{end_year}"
-            
-            all_tasks.extend(tasks)
-            
-            # Add a small delay between year ranges to avoid overwhelming Earth Engine
-            if start_year != year_ranges[-1][0]:  # If not the last range
-                logger.info("Waiting 30 seconds before processing next year range...")
-                time.sleep(30)
-        
-        return all_tasks
 
 def _convert_to_serializable(obj):
     """Convert NumPy types to native Python types for JSON serialization."""
@@ -497,11 +409,6 @@ def main():
         help="Input parcel file (Parquet format)"
     )
     parser.add_argument(
-        "--output-folder",
-        required=True,
-        help="Google Drive folder for exports"
-    )
-    parser.add_argument(
         "--start-year",
         type=int,
         default=1985,
@@ -512,18 +419,6 @@ def main():
         type=int,
         default=2023,
         help="End year for analysis"
-    )
-    parser.add_argument(
-        "--split-years",
-        type=int,
-        choices=[1, 2, 3, 4],
-        default=1,
-        help="Number of splits for year ranges (1=no split)"
-    )
-    parser.add_argument(
-        "--county-name",
-        type=str,
-        help="Name of the county (e.g., 'anoka', 'itasca'). Used in output file names."
     )
     parser.add_argument(
         "--max-concurrent-tasks",
@@ -537,6 +432,12 @@ def main():
         default=0,
         help="Start processing from this chunk index (useful for resuming interrupted runs)"
     )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=50,
+        help="Number of parcels to process in each chunk (default: 50)"
+    )
     
     args = parser.parse_args()
     
@@ -546,32 +447,27 @@ def main():
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {args.input}")
         
+        # Extract county name from input file path
+        county_name = input_path.stem.split('_')[0]
+        
         # Initialize processor
         processor = CountyParcelProcessorProd(
             start_year=args.start_year,
             end_year=args.end_year,
-            county_name=args.county_name,
-            max_concurrent_tasks=args.max_concurrent_tasks
+            county_name=county_name,
+            max_concurrent_tasks=args.max_concurrent_tasks,
+            chunk_size=args.chunk_size
         )
         
         # Load county parcels
         logger.info(f"Loading parcels from {args.input}")
         parcels = gpd.read_parquet(args.input)
         
-        # Process county with or without year splitting
-        if args.split_years > 1:
-            task_tracking = processor.process_county_split_years(
-                parcels,
-                args.output_folder,
-                splits=args.split_years,
-                start_chunk=args.start_chunk
-            )
-        else:
-            task_tracking = processor.process_county(
-                parcels,
-                args.output_folder,
-                start_chunk=args.start_chunk
-            )
+        # Process county
+        task_tracking = processor.process_county(
+            parcels,
+            start_chunk=args.start_chunk
+        )
         
         # Convert task tracking data to serializable format
         serializable_tracking = []

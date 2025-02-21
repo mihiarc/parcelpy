@@ -22,6 +22,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 import argparse
+import yaml
 
 # Configure warnings
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -39,37 +40,26 @@ def log_memory_usage():
     mem_info = process.memory_info()
     logger.info(f"Memory usage: {mem_info.rss / 1024 / 1024:.1f} MB")
 
-# Land Use Classifications with metadata
-LAND_USE_METADATA = {
-    1: {
-        "name": "Agriculture",
-        "color": "#ffd700",
-        "description": "Agricultural land including cropland",
-        "min_area_threshold": 900  # Minimum area in m² for reliable classification
-    },
-    2: {
-        "name": "Developed",
-        "color": "#ff4444",
-        "description": "Urban and developed areas",
-        "min_area_threshold": 900
-    },
-    3: {
-        "name": "Forest",
-        "color": "#228b22",
-        "description": "Forest and woodland areas",
-        "min_area_threshold": 900
-    },
-    6: {
-        "name": "Pasture",
-        "color": "#deb887",
-        "description": "Rangeland and pasture areas",
-        "min_area_threshold": 900
-    }
-}
+def load_lcms_config() -> Dict:
+    """Load LCMS configuration from yaml file."""
+    config_path = Path(__file__).parents[1] / 'config' / 'lcms_config.yaml'
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+# Load configuration
+LCMS_CONFIG = load_lcms_config()
+ANALYSIS_CLASSES = LCMS_CONFIG['analysis_classes']
 
 # Extract commonly used mappings
-LAND_USE_CODES = {k: v["name"] for k, v in LAND_USE_METADATA.items()}
-LAND_USE_COLORS = {v["name"]: v["color"] for k, v in LAND_USE_METADATA.items()}
+LAND_USE_CODES = {int(k): v['name'] for k, v in ANALYSIS_CLASSES.items()}
+LAND_USE_COLORS = {v['name']: v['color'] for v in ANALYSIS_CLASSES.values()}
+
+# Create class mapping for preprocessing
+CLASS_MAPPING = {}
+for target_class, config in ANALYSIS_CLASSES.items():
+    target_class = int(target_class)
+    for source_class in config['includes']:
+        CLASS_MAPPING[source_class] = target_class
 
 def process_land_use(args):
     """Process a single land use type (for parallel execution)."""
@@ -222,8 +212,8 @@ class LandUseChangeAnalyzerProd:
             for year in year_cols:
                 # Ensure numeric type and handle NaN values
                 chunk[year] = pd.to_numeric(chunk[year], errors='coerce').fillna(0).astype('int8')
-                # Combine Forest and Wetland (codes 3 and 4)
-                chunk.loc[chunk[year] == 4, year] = 3
+                # Apply class mapping from config
+                chunk[year] = chunk[year].map(CLASS_MAPPING).fillna(0).astype('int8')
             
             chunks.append(chunk)
             total_rows += len(chunk)
@@ -444,7 +434,7 @@ class LandUseChangeAnalyzerProd:
                 f'1985-2000:\n'
                 f'  * Total change: {period1.iloc[-1] - period1.iloc[0]:+,.0f} acres\n'
                 f'  * Rate: {(period1.iloc[-1] - period1.iloc[0])/15:+,.1f} acres/year\n'
-                f'2001-2023:\n'
+                f'- 2001-2023:\n'
                 f'  * Total change: {period2.iloc[-1] - period2.iloc[0]:+,.0f} acres\n'
                 f'  * Rate: {(period2.iloc[-1] - period2.iloc[0])/22:+,.1f} acres/year\n'
             )

@@ -1,0 +1,135 @@
+---
+description: 
+globs: 
+---
+# Explaining Issues and Solutions
+
+## Issue Documentation Structure
+
+1. **Issue Description**
+   - Clearly state the error message or problem
+   - Identify where in the code it occurs
+   - Explain the impact on functionality
+   - Include relevant code snippets
+
+2. **Context Analysis**
+   ```python
+   # Example problematic code with context
+   pixel_area = ee.Image.pixelArea()  # No band name
+   result = pixel_area.reduceRegion(...)  # Can't reliably access results
+   value = result.get('unknown_band')  # Fails at runtime
+   ```
+
+## Thought Process Framework
+
+1. **Understanding the Root Cause**
+   - Examine error messages in detail
+   - Identify assumptions that were incorrect
+   - Look for similar patterns in working code
+   - Consider the broader system context
+
+2. **Solution Development Steps**
+   ```
+   1. Gather Information
+      - Error messages
+      - System state
+      - Related documentation
+   
+   2. Form Hypotheses
+      - List possible causes
+      - Consider side effects
+      - Think about edge cases
+   
+   3. Test Assumptions
+      - Quick experiments
+      - Log key values
+      - Verify behavior
+   ```
+
+3. **Solution Evaluation Criteria**
+   - Does it address the root cause?
+   - Are there potential side effects?
+   - Is it consistent with best practices?
+   - Will it be maintainable?
+
+## Documentation Format
+
+1. **Issue Block**
+   ```
+   ISSUE:
+   - Error Message: <exact error text>
+   - Location: <file/function>
+   - Impact: <what breaks>
+   ```
+
+2. **Analysis Block**
+   ```
+   ROOT CAUSE:
+   1. Direct cause
+   2. Contributing factors
+   3. System context
+   ```
+
+3. **Solution Block**
+   ```
+   SOLUTION:
+   1. Proposed changes
+   2. Expected outcomes
+   3. Verification steps
+   ```
+
+## Example Template
+
+```markdown
+### Issue Description
+Error: "Dictionary.get: Dictionary does not contain key 'x'"
+Location: process_data() in data_handler.py
+Impact: Data processing pipeline fails for large datasets
+
+### Root Cause Analysis
+1. Missing key in dictionary due to:
+   - Incorrect initialization
+   - Lost data in transformation
+   - Async timing issue
+
+### Solution Process
+1. Hypothesis:
+   - Key name mismatch
+   - Data transformation error
+   - Timing issue
+
+2. Investigation:
+   - Logged dictionary contents
+   - Traced data flow
+   - Checked documentation
+
+3. Solution:
+   - Fixed key naming
+   - Added validation
+   - Updated error handling
+
+### Verification
+1. Test cases added
+2. Edge cases checked
+3. Integration verified
+```
+
+## Best Practices
+
+1. **Clear Communication**
+   - Use precise terminology
+   - Include relevant context
+   - Explain technical concepts
+   - Link to documentation
+
+2. **Logical Flow**
+   - Start with the problem
+   - Explain investigation
+   - Present solution
+   - Verify results
+
+3. **Documentation**
+   - Record assumptions
+   - Document decision points
+   - Include examples
+   - Note alternatives considered 

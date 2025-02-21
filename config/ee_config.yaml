@@ -2,7 +2,7 @@
 
 # Project settings
 project:
-  project_id: "${EE_PROJECT_ID}"  # Set via environment variableß
+  project_id: ee-chrismihiar
 
 # Processing settings
 processing:

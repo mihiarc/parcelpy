@@ -1,0 +1,54 @@
+---
+description: writing google earth engine code
+globs: *.py
+---
+# Google Earth Engine Server-Side Processing
+
+## Core Principles
+
+### Projections
+
+1. Explicit Projection Definition: Instead of directly passing the CRS to reproject. 
+
+2. setDefaultProjection: Using setDefaultProjection() is crucial for server-side reprojection in Earth Engine. This ensures the reprojection happens on the server, making it more efficient for larger datasets.
+
+Projection before Clipping: It's generally more efficient to reproject first and then clip, especially when dealing with large images. This way, we clip a smaller re-projected image instead of a larger original image.
+
+Why these changes matter for server-side processing:
+
+Efficiency: Server-side operations are generally faster and can handle larger datasets than client-side operations. setDefaultProjection() ensures that the reprojection is performed on the server.
+
+### Combined Reducers
+
+1. Instead of three separate reduceRegion calls, we can combine ee.Reducer.mode(), ee.Reducer.count(), and ee.Reducer.sum().unweighted() into a single reducer using combine(). This significantly reduces server requests and improves efficiency.
+
+### Server-side Calculations
+
+1. Instead of calling getInfo() to retrieve values from the client-side and calculate metrics, we should perform the calculation directly on the server using ee.Number operations. This is much more efficient.
+
+### Date and Year Handling
+
+1. When filtering ImageCollections by year in mapped functions:
+   * AVOID: Using client-side string formatting (f"{year}-01-01")
+   * USE: ee.Filter.calendarRange(year, year, 'year')
+   * WHY: Keeps all date operations server-side, avoiding client-server communication
+
+2. When working with years in mapped functions:
+   * Convert years to ee.Number objects
+   * Use server-side date construction (ee.Date.fromYMD)
+   * Keep all temporal operations within Earth Engine's server environment
+
+### Exporting Results
+
+1. ee.batch.Export: Instead of returning a dictionary of results, use ee.batch.Export.table.toDrive to export the results for each year to my Google Drive. This approach is more scalable, especially when dealing with many parcels.
+
+2. Task Management: Use lists of tasks, starting them iteratively using task.start(). This allows me to monitor the progress of each export task.
+
+3. Unique Task Descriptions: Use
+unique descriptions and file name prefixs for each export task to help you identify them in Google Drive.
+
+### Other Earth Engine Best Practices
+
+1. Set maxPixels to 1e13 to acommodate large aoi.
+
+2. To maintain server-side processing, use ee.Dictionary instead of Python dictionary (Dict).

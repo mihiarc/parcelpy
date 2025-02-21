@@ -1,0 +1,67 @@
+# Urban Sprawl Analysis Configuration
+
+# General settings
+general:
+  min_area_threshold: 0.1  # hectares
+  crs: "EPSG:5070"  # Albers Equal Area (matching LCMS)
+  resolution: 30  # meters (LCMS native resolution)
+
+# Study areas
+study_areas:
+  itasca:
+    name: "Itasca County"
+    state: "Minnesota"
+  
+  st_louis:
+    name: "St. Louis County"
+    state: "Minnesota"
+
+# Land use classification (LCMS-specific)
+land_use:
+  # Simplified class groupings
+  urban:
+    - 2  # Developed (LCMS class 2)
+  
+  forest_wetland:
+    - 3  # Forest (LCMS class 3)
+    - 4  # Non-Forest Wetland (LCMS class 4)
+  
+  agriculture:
+    - 1  # Agriculture (LCMS class 1)
+    - 6  # Rangeland/Pasture (LCMS class 6)
+  
+  # Other classes (5, 7) will be masked out
+
+# Density metrics configuration
+density:
+  # Analysis scales (in meters)
+  scales:
+    local: 90    # 3x3 LCMS pixels
+    neighborhood: 300  # Local neighborhood
+    district: 900    # Broader context
+  
+  # Minimum area thresholds
+  min_urban_patch: 1.0  # hectares
+  min_cluster_size: 5.0  # hectares
+
+# Continuity metrics configuration
+continuity:
+  # Distance thresholds
+  max_gap: 60  # meters (2 LCMS pixels)
+  
+  # Edge analysis
+  edge_buffer: 30  # meters (1 LCMS pixel)
+  
+  # Patch analysis
+  min_patch_size: 1.0  # hectares
+  max_patch_size: 1000.0  # hectares
+
+# Output settings
+output:
+  report_format: "json"
+  include_visualizations: true
+  visualization_formats:
+    - "png"
+    - "html"
+  decimal_precision: 4
+  save_intermediate: true  # Save intermediate rasters for validation 

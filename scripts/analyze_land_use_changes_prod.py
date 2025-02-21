@@ -26,16 +26,10 @@ import argparse
 # Configure warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 
-# Set up logging with rotation
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(
-            f'land_use_analysis_prod_{datetime.now():%Y%m%d_%H%M%S}.log'
-        ),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -81,27 +75,46 @@ def process_land_use(args):
     """Process a single land use type (for parallel execution)."""
     code, label, df, years = args
     
+    # Calculate total area once (constant across years)
+    total_area_acres = df['area_m2'].sum() / 4046.86  # Convert to acres
+    
     # Calculate areas for all years
     areas = []
     for year in years:
+        # Calculate area for this land use type
         mask = df[str(year)] == code
-        area = df.loc[mask, 'area_m2'].sum() / 4046.86
+        area = df.loc[mask, 'area_m2'].sum() / 4046.86  # Convert to acres
         areas.append(area)
     
     data = pd.Series(areas, index=years)
+    
+    # Calculate absolute changes
+    absolute_changes = data.diff()  # Get year-over-year changes in acres
+    mean_annual_change_acres = absolute_changes.mean()  # Average change in acres per year
     
     # Calculate detailed statistics
     stats = {
         "current_area": data.iloc[-1],
         "peak_area": data.max(),
         "peak_year": years[data.argmax()],
-        "total_change_pct": ((data.iloc[-1] - data.iloc[0]) / data.iloc[0]) * 100,
+        "total_change_acres": data.iloc[-1] - data.iloc[0],  # Total change in acres
+        "total_change_pct": ((data.iloc[-1] - data.iloc[0]) / data.iloc[0]) * 100 if data.iloc[0] != 0 else 0,
+        "mean_annual_change_acres": mean_annual_change_acres,  # New metric
         "mean_annual_change_pct": data.pct_change().mean() * 100,
-        "volatility": data.pct_change().std() * 100,
-        "trend": np.polyfit(range(len(years)), data.values, 1)[0],
+        "volatility_acres": absolute_changes.std(),  # Standard deviation of changes in acres
+        "volatility_pct": data.pct_change().std() * 100,
+        "trend_acres_per_year": np.polyfit(range(len(years)), data.values, 1)[0],  # Linear trend in acres/year
         "periodic_changes": {
-            "1985-2000": ((data[2000] - data[1985]) / data[1985]) * 100,
-            "2001-2023": ((data[2023] - data[2001]) / data[2001]) * 100
+            "1985-2000": {
+                "total_acres": data[2000] - data[1985],
+                "acres_per_year": (data[2000] - data[1985]) / 15,  # Average change per year in acres
+                "percent": ((data[2000] - data[1985]) / data[1985]) * 100 if data[1985] != 0 else 0
+            },
+            "2001-2023": {
+                "total_acres": data[2023] - data[2001],
+                "acres_per_year": (data[2023] - data[2001]) / 22,  # Average change per year in acres
+                "percent": ((data[2023] - data[2001]) / data[2001]) * 100 if data[2001] != 0 else 0
+            }
         }
     }
     
@@ -119,23 +132,18 @@ class LandUseChangeAnalyzerProd:
         chunk_size: int = 50000,
         n_workers: Optional[int] = None
     ):
-        """
-        Initialize the analyzer with enhanced configuration.
-        """
-        print(f"Initializing analyzer...")  # Debug output
+        """Initialize the analyzer with enhanced configuration."""
         self.data_path = Path(data_path)
         self.output_dir = Path(output_dir)
         
         # Extract county name from input path
         county_path = Path(data_path).parent.name
         self.county_name = county_path.split('_')[1].replace('_', ' ') if '_' in county_path else 'Unknown'
-        logger.info(f"Analyzing data for {self.county_name}")
         
         self.years = list(range(start_year, end_year + 1))
         self.chunk_size = chunk_size
         self.n_workers = n_workers or max(1, multiprocessing.cpu_count() - 1)
         
-        print(f"Creating output directories at {self.output_dir}")  # Debug output
         # Create output directories
         self.output_dir.mkdir(parents=True, exist_ok=True)
         for subdir in ['plots', 'data', 'reports']:
@@ -147,10 +155,9 @@ class LandUseChangeAnalyzerProd:
         
         # Set up logging for this instance
         self.log_file = self.output_dir / 'reports' / f'analysis_{datetime.now():%Y%m%d_%H%M%S}.log'
-        print(f"Setting up logging to {self.log_file}")  # Debug output
         self.setup_logging()
         
-        logger.info(f"Initializing analysis for years {start_year}-{end_year}")
+        logger.info(f"Initializing analysis for {self.county_name}, years {start_year}-{end_year}")
         logger.info(f"Using {self.n_workers} worker processes")
         log_memory_usage()
         
@@ -177,57 +184,69 @@ class LandUseChangeAnalyzerProd:
         chunks = []
         total_rows = 0
         
-        # Read data in chunks with initial string types
+        # Read data in chunks with initial string types for potentially problematic columns
         chunk_iterator = pd.read_csv(
             self.data_path,
             chunksize=self.chunk_size,
             dtype={
                 'PRCL_NBR': str,
-                'area_m2': str,  # Read as string first
-                'is_sub_resolution': str,  # Read as string first
-                'category': str,
+                'area_m2': str,  # Read as string first to handle potential formatting issues
+                'is_sub_resolution': str,  # Read as string to handle 'True'/'False' values
                 **{str(year): 'int8' for year in self.years}
             }
         )
         
         for chunk in tqdm(chunk_iterator, desc="Loading data chunks"):
-            # Convert numeric columns
-            chunk['area_m2'] = pd.to_numeric(chunk['area_m2'], errors='coerce')
-            chunk['is_sub_resolution'] = chunk['is_sub_resolution'].map({'True': True, 'False': False})
+            # Convert area_m2 to float32 with error handling
+            try:
+                chunk['area_m2'] = pd.to_numeric(chunk['area_m2'], errors='coerce').astype('float32')
+            except Exception as e:
+                logger.warning(f"Error converting area_m2: {e}. Attempting cleanup...")
+                # Try to clean the string and convert again
+                chunk['area_m2'] = chunk['area_m2'].str.replace(',', '').str.strip()
+                chunk['area_m2'] = pd.to_numeric(chunk['area_m2'], errors='coerce').astype('float32')
+            
+            # Convert is_sub_resolution to boolean with flexible handling
+            try:
+                # Handle various string formats
+                chunk['is_sub_resolution'] = chunk['is_sub_resolution'].map({
+                    'True': True, 'true': True, 'TRUE': True, '1': True, 1: True,
+                    'False': False, 'false': False, 'FALSE': False, '0': False, 0: False
+                }).fillna(False)  # Default to False for any unmatched values
+            except Exception as e:
+                logger.warning(f"Error converting is_sub_resolution: {e}. Setting to False.")
+                chunk['is_sub_resolution'] = False
             
             # Process year columns
             year_cols = [str(year) for year in self.years]
             for year in year_cols:
+                # Ensure numeric type and handle NaN values
+                chunk[year] = pd.to_numeric(chunk[year], errors='coerce').fillna(0).astype('int8')
                 # Combine Forest and Wetland (codes 3 and 4)
-                chunk[year] = chunk[year].replace({4: 3})
-                # Filter to keep only the classes we want
-                valid_codes = list(LAND_USE_CODES.keys())
-                mask = chunk[year].isin(valid_codes)
-                chunk = chunk[mask]
+                chunk.loc[chunk[year] == 4, year] = 3
             
-            if not chunk.empty:
-                chunks.append(chunk)
-                total_rows += len(chunk)
-                
-                # Log progress
-                if total_rows % 100000 == 0:
-                    logger.info(f"Processed {total_rows:,} rows")
-                    log_memory_usage()
+            chunks.append(chunk)
+            total_rows += len(chunk)
+            
+            if total_rows % 100000 == 0:
+                logger.info(f"Processed {total_rows:,} rows")
+                log_memory_usage()
         
         # Combine chunks and optimize memory
-        logger.info("Combining chunks and optimizing memory...")
         self.df = pd.concat(chunks, ignore_index=True)
         
-        # Optimize data types
-        self.df['area_m2'] = self.df['area_m2'].astype('float32')
-        self.df['is_sub_resolution'] = self.df['is_sub_resolution'].astype('bool')
-        self.df['category'] = self.df['category'].astype('category')
+        # Validate data
+        logger.info("Validating data...")
+        invalid_area = (self.df['area_m2'] <= 0) | self.df['area_m2'].isna()
+        if invalid_area.any():
+            logger.warning(f"Found {invalid_area.sum()} rows with invalid area values. Setting to minimum valid area.")
+            self.df.loc[invalid_area, 'area_m2'] = 1.0  # Set to 1 square meter as minimum
         
         # Clean up
         del chunks
         gc.collect()
         
-        logger.info(f"Loaded {len(self.df):,} rows of data")
+        logger.info(f"Loaded {len(self.df):,} rows, total area: {self.df['area_m2'].sum() / 4046.86:.2f} acres")
         log_memory_usage()
     
     def create_transition_matrix(
@@ -236,20 +255,14 @@ class LandUseChangeAnalyzerProd:
         end_year: int,
         weighted: bool = True
     ) -> pd.DataFrame:
-        """
-        Create a transition matrix between two years.
-        
-        Args:
-            start_year: Starting year
-            end_year: Ending year
-            weighted: If True, weight by area; if False, count parcels
-        """
+        """Create a transition matrix between two years."""
         # Get land use codes for start and end years
         start_codes = self.df[str(start_year)]
         end_codes = self.df[str(end_year)]
         
         # Create transition matrix
         if weighted:
+            # Calculate transitions weighted by area
             transitions = pd.crosstab(
                 start_codes.map(LAND_USE_CODES),
                 end_codes.map(LAND_USE_CODES),
@@ -257,11 +270,23 @@ class LandUseChangeAnalyzerProd:
                 aggfunc='sum'
             ) / 4046.86  # Convert to acres
         else:
+            # Calculate transitions based on parcel counts
             transitions = pd.crosstab(
                 start_codes.map(LAND_USE_CODES),
                 end_codes.map(LAND_USE_CODES),
                 normalize='index'
             ) * 100
+        
+        # Ensure all land use categories are present
+        all_categories = list(LAND_USE_CODES.values())
+        for cat in all_categories:
+            if cat not in transitions.index:
+                transitions.loc[cat] = 0
+            if cat not in transitions.columns:
+                transitions[cat] = 0
+        
+        # Sort index and columns to match the original order
+        transitions = transitions.reindex(index=all_categories, columns=all_categories, fill_value=0)
         
         return transitions
     
@@ -277,43 +302,75 @@ class LandUseChangeAnalyzerProd:
             axes = [axes]
         
         for idx, (start_year, end_year) in enumerate(transition_years):
+            # Get transition matrix
             transitions = self.create_transition_matrix(
                 start_year, end_year, weighted=weighted
             )
             
-            # Filter small values
-            transitions = transitions.where(transitions >= min_value, 0)
+            # Create mask for values below threshold
+            mask = transitions < min_value if weighted else transitions < 0.1
             
-            # Create heatmap with blue color scheme
-            sns.heatmap(
+            # Create heatmap with explicit value display
+            heatmap = sns.heatmap(
                 transitions,
-                annot=True,
-                fmt='.1f',
+                annot=True,  # Show values in cells
+                fmt=',.0f' if weighted else '.1f',  # Format for numbers
                 cmap='Blues',
                 vmin=0,
-                vmax=None if weighted else 100,
+                ax=axes[idx],
+                square=True,
                 cbar_kws={'label': 'Acres' if weighted else 'Percentage'},
-                ax=axes[idx]
+                annot_kws={'size': 10},  # Make annotations more visible
+                mask=mask  # Mask small values
             )
             
-            # Customize plot with county name
-            axes[idx].set_title(
-                f'{self.county_name} Land Use Transitions {start_year} → {end_year}\n(>={min_value} {"acres" if weighted else "%"} shown)',
-                pad=20
+            # Manually add annotations
+            for i in range(len(transitions.index)):
+                for j in range(len(transitions.columns)):
+                    value = transitions.iloc[i, j]
+                    if not mask.iloc[i, j]:  # Only annotate non-masked values
+                        text = f'{value:,.0f}' if weighted else f'{value:.1f}'
+                        heatmap.text(
+                            j + 0.5,  # Center in cell
+                            i + 0.5,
+                            text,
+                            ha='center',
+                            va='center',
+                            fontsize=10
+                        )
+            
+            # Customize plot
+            title = f'Land Use Transitions {start_year} → {end_year}\n'
+            title += '(acres)' if weighted else '(% of starting land use)'
+            axes[idx].set_title(title, pad=20)
+            
+            # Rotate labels for better readability
+            axes[idx].set_xticklabels(
+                axes[idx].get_xticklabels(),
+                rotation=45,
+                ha='right',
+                fontsize=10
             )
-            axes[idx].set_xlabel(f'Land Use in {end_year}')
+            axes[idx].set_yticklabels(
+                axes[idx].get_yticklabels(),
+                rotation=0,
+                fontsize=10
+            )
+            
+            # Add labels
             if idx == 0:
-                axes[idx].set_ylabel(f'Land Use in {start_year}')
-            else:
-                axes[idx].set_ylabel('')
+                axes[idx].set_ylabel('Starting Land Use', fontsize=12)
+            axes[idx].set_xlabel('Ending Land Use', fontsize=12)
             
-            # Rotate x-axis labels for better readability
-            plt.setp(axes[idx].get_xticklabels(), rotation=45, ha='right')
-            plt.setp(axes[idx].get_yticklabels(), rotation=0)
+            # Force drawing of annotations
+            fig.canvas.draw()
         
+        # Adjust layout to prevent text cutoff
         plt.tight_layout()
+        
+        # Save with extra padding
         output_path = self.output_dir / 'plots' / 'transition_matrices_comparison.png'
-        plt.savefig(output_path, bbox_inches='tight', dpi=300)
+        plt.savefig(output_path, bbox_inches='tight', dpi=300, pad_inches=0.5)
         plt.close()
         
         logger.info(f"Saved transition matrices comparison to {output_path}")
@@ -345,21 +402,24 @@ class LandUseChangeAnalyzerProd:
                 index=self.years
             )
             
-            # Calculate statistics
-            total_change = ((data.iloc[-1] - data.iloc[0]) / data.iloc[0]) * 100
-            mean_annual_change = data.pct_change().mean() * 100
-            volatility = data.pct_change().std() * 100
+            # Calculate absolute changes
+            absolute_changes = data.diff()  # Get year-over-year changes in acres
             
-            # Plot 1: Area over time with rate of change
+            # Calculate statistics
+            total_change_acres = data.iloc[-1] - data.iloc[0]
+            mean_annual_change_acres = absolute_changes.mean()
+            volatility_acres = absolute_changes.std()
+            
+            # Plot 1: Area over time with absolute rate of change
             line1 = ax.plot(self.years, data.values, color=self.colors[label], 
                     label=f"{label} Area", linewidth=2.5)
             
-            # Secondary axis: Rate of change
+            # Secondary axis: Absolute rate of change in acres
             ax_twin = ax.twinx()
-            # Calculate rolling average of year-over-year change
-            rolling_change = data.pct_change().rolling(window=3, center=True).mean() * 100
+            # Calculate rolling average of year-over-year absolute changes
+            rolling_change = absolute_changes.rolling(window=3, center=True).mean()
             line2 = ax_twin.plot(data.index, rolling_change, color='gray', linestyle='dotted', alpha=0.7,
-                         label='Rate of Change (%/year)', linewidth=1.5)
+                         label='Rate of Change (acres/year)', linewidth=1.5)
             
             # Add period means for area
             period1 = data[data.index <= 2000]
@@ -377,12 +437,16 @@ class LandUseChangeAnalyzerProd:
             # Add statistics text to the legend axis
             stats_text = (
                 f'Summary Statistics:\n'
-                f'Total Change: {total_change:+.1f}%\n'
-                f'Mean Annual Change: {mean_annual_change:+.1f}%\n'
-                f'Volatility: {volatility:.1f}%\n\n'
+                f'Total Change: {total_change_acres:+,.0f} acres\n'
+                f'Mean Annual Change: {mean_annual_change_acres:+,.1f} acres/year\n'
+                f'Volatility: {volatility_acres:.1f} acres (std. dev. of annual changes)\n\n'
                 f'Period Changes:\n'
-                f'1985-2000: {((period1.iloc[-1] - period1.iloc[0]) / period1.iloc[0] * 100):+.1f}%\n'
-                f'2001-2023: {((period2.iloc[-1] - period2.iloc[0]) / period2.iloc[0] * 100):+.1f}%'
+                f'1985-2000:\n'
+                f'  * Total change: {period1.iloc[-1] - period1.iloc[0]:+,.0f} acres\n'
+                f'  * Rate: {(period1.iloc[-1] - period1.iloc[0])/15:+,.1f} acres/year\n'
+                f'2001-2023:\n'
+                f'  * Total change: {period2.iloc[-1] - period2.iloc[0]:+,.0f} acres\n'
+                f'  * Rate: {(period2.iloc[-1] - period2.iloc[0])/22:+,.1f} acres/year\n'
             )
             
             # First add the legend at the top of the right column
@@ -409,7 +473,7 @@ class LandUseChangeAnalyzerProd:
             ax.set_title(f'{self.county_name} {label} Area and Rate of Change Over Time', pad=20, fontsize=12)
             ax.set_xlabel('Year', fontsize=10)
             ax.set_ylabel('Area (acres)', fontsize=10)
-            ax_twin.set_ylabel('Rate of Change (%/year)', fontsize=10)
+            ax_twin.set_ylabel('Rate of Change (acres/year)', fontsize=10)
             
             # Add grid to primary axis
             ax.grid(True, alpha=0.3, which='both')
@@ -538,7 +602,6 @@ class LandUseChangeAnalyzerProd:
             forest_transitions = forest_transitions[forest_transitions > 0]
             
             if forest_transitions.empty:
-                logger.info(f"No significant forest loss found for period {start_year}-{end_year}")
                 continue
             
             # Create node lists
@@ -552,6 +615,9 @@ class LandUseChangeAnalyzerProd:
             # Create node labels
             node_labels = [f"Forest ({start_year})"] + [f"{label} ({end_year})" for label in target_labels]
             node_colors = [self.colors["Forest"]] + [self.colors[label] for label in target_labels]
+            
+            # Calculate total forest loss
+            total_loss = values.sum()
             
             # Create Sankey diagram
             fig = go.Figure(data=[go.Sankey(
@@ -569,9 +635,6 @@ class LandUseChangeAnalyzerProd:
                     color=[f"rgba{tuple(int(self.colors['Forest'].lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.4,)}"] * len(values)
                 )
             )])
-            
-            # Calculate total forest loss
-            total_loss = values.sum()
             
             # Update layout with county name
             fig.update_layout(
@@ -594,9 +657,7 @@ class LandUseChangeAnalyzerProd:
             # Save as PNG for static version
             output_path_png = self.output_dir / 'plots' / f'forest_loss_sankey_{start_year}_{end_year}.png'
             fig.write_image(str(output_path_png))
-            
-            logger.info(f"Saved Forest Loss Sankey diagram to {output_path_html} and {output_path_png}")
-    
+
     def plot_development_gains_sankey(
         self,
         transition_years: List[Tuple[int, int]],
@@ -622,7 +683,6 @@ class LandUseChangeAnalyzerProd:
             development_transitions = development_transitions[development_transitions > 0]
             
             if development_transitions.empty:
-                logger.info(f"No significant development gains found for period {start_year}-{end_year}")
                 continue
             
             # Create node lists
@@ -636,6 +696,9 @@ class LandUseChangeAnalyzerProd:
             # Create node labels
             node_labels = [f"{label} ({start_year})" for label in source_labels] + [f"Developed ({end_year})"]
             node_colors = [self.colors[label] for label in source_labels] + [self.colors["Developed"]]
+            
+            # Calculate total development gain
+            total_gain = values.sum()
             
             # Create Sankey diagram
             fig = go.Figure(data=[go.Sankey(
@@ -654,9 +717,6 @@ class LandUseChangeAnalyzerProd:
                           for label in source_labels]
                 )
             )])
-            
-            # Calculate total development gain
-            total_gain = values.sum()
             
             # Update layout with county name
             fig.update_layout(
@@ -679,8 +739,6 @@ class LandUseChangeAnalyzerProd:
             # Save as PNG for static version
             output_path_png = self.output_dir / 'plots' / f'development_gains_sankey_{start_year}_{end_year}.png'
             fig.write_image(str(output_path_png))
-            
-            logger.info(f"Saved Development Gains Sankey diagram to {output_path_html} and {output_path_png}")
 
     def analyze_and_visualize(
         self,
@@ -688,29 +746,20 @@ class LandUseChangeAnalyzerProd:
     ):
         """Run complete analysis with enhanced error handling."""
         try:
-            logger.info("Starting comprehensive analysis...")
-            
             # Set default transition years if not provided
             if transition_years is None:
                 transition_years = [(1985, 2000), (2000, 2023)]
             
             # Create visualizations
-            logger.info("Creating temporal trends panels...")
             self.plot_temporal_trends()
-            
-            logger.info("Creating transition matrices comparison...")
             self.plot_transition_matrices(transition_years, weighted=True)
             self.plot_transition_matrices(transition_years, weighted=False)
-            
-            logger.info("Creating specialized Sankey diagrams...")
             self.plot_forest_loss_sankey(transition_years)
             self.plot_development_gains_sankey(transition_years)
             
             # Analyze trends
-            logger.info("Analyzing land use trends...")
             trends = self.analyze_landuse_trends()
             
-            logger.info("Analysis complete!")
             return trends
             
         except Exception as e:
@@ -719,8 +768,6 @@ class LandUseChangeAnalyzerProd:
 
     def analyze_landuse_trends(self) -> Dict:
         """Analyze trends with enhanced statistics and parallel processing."""
-        logger.info("Analyzing land use trends...")
-        
         # Process land uses in parallel
         with ProcessPoolExecutor(max_workers=self.n_workers) as executor:
             futures = [
@@ -744,7 +791,6 @@ class LandUseChangeAnalyzerProd:
         # Generate summary report
         self._generate_trend_report(results)
         
-        logger.info(f"Saved trend analysis to {output_path}")
         return results
     
     def _generate_trend_report(self, trends: Dict):
@@ -769,12 +815,16 @@ class LandUseChangeAnalyzerProd:
                 f"![{label} Temporal Trends](../plots/temporal_trends_{label.lower()}.png)\n",
                 f"- Current area: {stats['current_area']:,.0f} acres",
                 f"- Peak area: {stats['peak_area']:,.0f} acres ({stats['peak_year']})",
-                f"- Total change: {stats['total_change_pct']:+.1f}%",
-                f"- Mean annual change: {stats['mean_annual_change_pct']:+.1f}%",
-                f"- Volatility: {stats['volatility']:.1f}%",
+                f"- Total change: {stats['total_change_acres']:+,.0f} acres ({stats['total_change_pct']:+.1f}%)",
+                f"- Mean annual change: {stats['mean_annual_change_acres']:+,.1f} acres/year",
+                f"- Volatility: {stats['volatility_acres']:.1f} acres (std. dev. of annual changes)",
                 "\nPeriod Changes:",
-                f"- 1985-2000: {stats['periodic_changes']['1985-2000']:+.1f}%",
-                f"- 2001-2023: {stats['periodic_changes']['2001-2023']:+.1f}%\n"
+                f"- 1985-2000:",
+                f"  * Total change: {stats['periodic_changes']['1985-2000']['total_acres']:+,.0f} acres",
+                f"  * Rate: {stats['periodic_changes']['1985-2000']['acres_per_year']:+,.1f} acres/year",
+                f"- 2001-2023:",
+                f"  * Total change: {stats['periodic_changes']['2001-2023']['total_acres']:+,.0f} acres",
+                f"  * Rate: {stats['periodic_changes']['2001-2023']['acres_per_year']:+,.1f} acres/year\n"
             ])
         
         # Add transition analysis section with matrices
@@ -814,7 +864,6 @@ class LandUseChangeAnalyzerProd:
 
 def main():
     """Main execution function with enhanced CLI."""
-    print("Starting land use change analysis...")  # Debug output
     parser = argparse.ArgumentParser(
         description="Production Land Use Change Analyzer"
     )
@@ -859,11 +908,8 @@ def main():
     )
     
     args = parser.parse_args()
-    print(f"Input file: {args.input_file}")  # Debug output
-    print(f"Output directory: {args.output_dir}")  # Debug output
     
     try:
-        print("Creating analyzer instance...")  # Debug output
         analyzer = LandUseChangeAnalyzerProd(
             data_path=args.input_file,
             output_dir=args.output_dir,
@@ -883,15 +929,12 @@ def main():
                 args.transition_years[1::2]
             ))
         
-        print("Starting analysis and visualization...")  # Debug output
         analyzer.analyze_and_visualize(transition_years)
-        print("Analysis complete!")  # Debug output
+        logger.info("Analysis complete!")
         
     except Exception as e:
-        print(f"Error occurred: {str(e)}")  # Debug output
         logger.error(f"Error: {str(e)}")
-        raise 
+        raise
 
 if __name__ == "__main__":
-    print("Starting land use change analysis...")  # Debug output
     main() 

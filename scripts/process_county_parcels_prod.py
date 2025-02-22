@@ -87,12 +87,12 @@ class CountyParcelProcessorProd:
     
     def __init__(
         self,
+        parcel_id_field: str,  # Required field name for parcel ID in input data
         start_year: int = 1985,
         end_year: int = 2023,
         county_name: str = None,
         max_concurrent_tasks: int = 3000,
-        chunk_size: int = 100,
-        parcel_id_field: str = 'PRCL_NBR'
+        chunk_size: int = 200
     ):
         """Initialize the processor with time range."""
         self.years = list(range(start_year, end_year + 1))
@@ -463,12 +463,12 @@ def main():
         
         # Initialize processor
         processor = CountyParcelProcessorProd(
+            parcel_id_field=args.parcel_id_field,
             start_year=args.start_year,
             end_year=args.end_year,
             county_name=county_name,
             max_concurrent_tasks=args.max_concurrent_tasks,
-            chunk_size=args.chunk_size,
-            parcel_id_field=args.parcel_id_field
+            chunk_size=args.chunk_size
         )
         
         # Load county parcels

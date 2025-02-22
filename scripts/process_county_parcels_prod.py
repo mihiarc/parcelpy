@@ -278,19 +278,6 @@ class CountyParcelProcessorProd:
         
         processed_parcels['geometry'] = simplified_geoms
         
-        # Calculate area in m2 from geometry
-        processed_parcels['area_m2'] = processed_parcels.geometry.area
-        
-        # Calculate size distribution
-        size_distribution = np.histogram(processed_parcels.area_m2, 
-                                       bins=[0, 900, 2700, 8100, float('inf')])
-        
-        logger.info("Parcel size distribution:")
-        logger.info(f"  - Sub-resolution (<900m²): {size_distribution[0][0]:,} parcels")
-        logger.info(f"  - 1-3 pixels: {size_distribution[0][1]:,} parcels")
-        logger.info(f"  - 3-9 pixels: {size_distribution[0][2]:,} parcels")
-        logger.info(f"  - >9 pixels: {size_distribution[0][3]:,} parcels")
-        
         log_memory_usage()
         return processed_parcels
     

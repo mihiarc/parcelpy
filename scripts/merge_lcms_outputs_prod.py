@@ -160,32 +160,6 @@ class LCMSOutputMergerProd:
         reports_dir = os.path.join(self.output_dir, "reports")
         os.makedirs(reports_dir, exist_ok=True)
 
-        # Calculate summary statistics
-        total_area_acres = float(stats['total_area_m2']) / 4046.86  # Convert to float
-        sub_resolution_percent = float(stats['sub_resolution_parcels']) / float(stats['total_parcels']) * 100
-
-        # Generate markdown report
-        report_md = f"""# LCMS Data Processing Summary
-
-## Overview
-- Total Parcels: {int(stats['total_parcels']):,}
-- Total Area: {total_area_acres:,.2f} acres
-- Sub-resolution Parcels: {int(stats['sub_resolution_parcels']):,} ({sub_resolution_percent:.1f}%)
-
-## Land Use Distribution by Year
-"""
-        # Add land use distribution for each year
-        for year in sorted(stats['land_use_by_year'].keys()):
-            report_md += f"\n### Year {year}\n"
-            total_parcels = sum(int(count) for count in stats['land_use_by_year'][year].values())
-            for code, count in sorted(stats['land_use_by_year'][year].items()):
-                percentage = (float(count) / total_parcels) * 100
-                report_md += f"- Code {int(code)}: {int(count):,} parcels ({percentage:.1f}%)\n"
-
-        # Save reports
-        with open(os.path.join(reports_dir, "merge_summary.md"), "w") as f:
-            f.write(report_md)
-
         # Save JSON stats
         with open(os.path.join(reports_dir, "merge_stats.json"), "w") as f:
             # Convert defaultdict to regular dict and numpy types to Python types

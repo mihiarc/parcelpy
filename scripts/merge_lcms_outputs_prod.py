@@ -36,13 +36,19 @@ CONFIG = load_config()
 # Set up logging with config
 logging.basicConfig(
     level=getattr(logging, CONFIG['logging']['level']),
-    format=CONFIG['logging']['format'],
-    handlers=[
-        logging.FileHandler(CONFIG['logging']['file']),
-        logging.StreamHandler()
-    ]
+    format=CONFIG['logging']['format']
 )
 logger = logging.getLogger(__name__)
+
+# Ensure logs directory exists
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+
+# Add file handler for logging
+log_file = log_dir / f'merge_lcms_{datetime.now():%Y%m%d_%H%M%S}.log'
+file_handler = logging.FileHandler(log_file)
+file_handler.setFormatter(logging.Formatter(CONFIG['logging']['format']))
+logger.addHandler(file_handler)
 
 def log_memory_usage():
     """Log current memory usage."""

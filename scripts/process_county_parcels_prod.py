@@ -66,6 +66,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Ensure logs directory exists
+log_dir = Path('logs')
+log_dir.mkdir(exist_ok=True)
+
+# Add file handler for logging
+log_file = log_dir / f'process_county_{datetime.now():%Y%m%d_%H%M%S}.log'
+file_handler = logging.FileHandler(log_file)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
 def log_memory_usage():
     """Log current memory usage."""
     process = psutil.Process()

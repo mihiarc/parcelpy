@@ -89,6 +89,12 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
+# Function to get task tracking file path
+def get_task_tracking_path(county_name: str) -> Path:
+    """Get the path for task tracking JSON file."""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return log_dir / f'task_tracking_{county_name}_{timestamp}.json'
+
 class CountyParcelProcessorProd:
     """Production processor for county-level parcel datasets."""
     
@@ -574,8 +580,8 @@ def main():
             }
             serializable_tracking.append(serializable_task)
         
-        # Save task tracking information
-        tracking_file = f"task_tracking_{datetime.now():%Y%m%d_%H%M%S}.json"
+        # Save task tracking information to logs directory
+        tracking_file = get_task_tracking_path(county_name)
         with open(tracking_file, 'w') as f:
             json.dump(serializable_tracking, f, indent=2)
         

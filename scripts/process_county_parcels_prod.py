@@ -143,13 +143,26 @@ class CountyParcelProcessorProd:
             self._process_sub_resolution_timeseries(geom, lcms_series),
             self._process_large_parcel_timeseries(geom, lcms_series)
         )
-        
-        # Extract the land use classifications.  'results' is a dictionary
-        # where keys are years (as strings) and values are land use classes.
-        # We construct a new dictionary containing only the parcel ID and the
-        # land use classifications.
-        # Note: We use PARCEL_ID here since we standardized the field name in _clean_properties
-        return feature.set(ee.Dictionary(results).set('PARCEL_ID', feature.get('PARCEL_ID')))
+
+        # --- Conditional set ---
+        # Start with a dictionary containing only the parcel ID.
+        result_dict = ee.Dictionary({'PARCEL_ID': feature.get('PARCEL_ID')})
+
+        # Iterate over the years and add land use classifications ONLY IF they
+        # are not null.
+        def add_if_not_null(year, dict_):
+            year_str = ee.String(ee.Number(year).format())
+            value = ee.Dictionary(results).get(year_str)
+            return ee.Algorithms.If(
+                ee.Algorithms.IsEqual(value, None), # Check for null
+                dict_,  # If null, return the dictionary unchanged
+                ee.Dictionary(dict_).set(year_str, value) # If not null, add it
+            )
+
+        # Apply the function iteratively to build the dictionary.
+        final_dict = ee.Dictionary(ee.List(self.years).iterate(add_if_not_null, result_dict))
+
+        return feature.set(final_dict)
     
     def _process_large_parcel_timeseries(
         self,
@@ -465,14 +478,17 @@ def main():
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=100,
-        help="Number of parcels to process in each chunk (default: 100)"
+        default=DEFAULT_CHUNK_SIZE,
+        help=f"Number of parcels to process in each chunk (default: {DEFAULT_CHUNK_SIZE})"
     )
     parser.add_argument(
         "--parcel-id-field",
         type=str,
-        default='PARCEL_ID',
-        help="Name of the column containing parcel IDs (default: PARCEL_ID)"
+        required=True,
+        help="""Name of the column containing parcel IDs. 
+        To find this field name, you can run:
+        python -c "import pandas as pd; print(pd.read_parquet('YOUR_INPUT_FILE').columns.tolist())"
+        Common names: PIN, FIPS_PIN, PRCL_NBR, PARCEL_ID"""
     )
     
     args = parser.parse_args()
@@ -499,6 +515,15 @@ def main():
         # Load county parcels
         logger.info(f"Loading parcels from {args.input}")
         parcels = gpd.read_parquet(args.input)
+        
+        # Verify parcel ID field exists
+        if args.parcel_id_field not in parcels.columns:
+            available_cols = parcels.columns.tolist()
+            raise ValueError(
+                f"Parcel ID field '{args.parcel_id_field}' not found in input data.\n"
+                f"Available columns are: {available_cols}\n"
+                "Please choose one of these columns as your parcel ID field."
+            )
         
         # Process county
         task_tracking = processor.process_county(

@@ -58,6 +58,14 @@ from tqdm import tqdm
 import psutil
 import sys
 import time
+import yaml
+
+# Load config
+with open('config/ee_config.yaml', 'r') as f:
+    EE_CONFIG = yaml.safe_load(f)
+    
+# Constants
+DEFAULT_CHUNK_SIZE = EE_CONFIG['processing']['DEFAULT_CHUNK_SIZE']
 
 # Set up logging
 logging.basicConfig(
@@ -76,12 +84,6 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
 
-def log_memory_usage():
-    """Log current memory usage."""
-    process = psutil.Process()
-    mem_info = process.memory_info()
-    logger.info(f"Memory usage: {mem_info.rss / 1024 / 1024:.1f} MB")
-
 class CountyParcelProcessorProd:
     """Production processor for county-level parcel datasets."""
     
@@ -92,7 +94,7 @@ class CountyParcelProcessorProd:
         end_year: int = 2023,
         county_name: str = None,
         max_concurrent_tasks: int = 3000,
-        chunk_size: int = 200
+        chunk_size: int = DEFAULT_CHUNK_SIZE
     ):
         """Initialize the processor with time range."""
         self.years = list(range(start_year, end_year + 1))
@@ -140,7 +142,7 @@ class CountyParcelProcessorProd:
         
         # Process based on resolution
         results = ee.Algorithms.If(
-            area.lt(900),  # LCMS resolution threshold
+            area.lt(self.LCMS_RESOLUTION_THRESHOLD_M2),  # 30m x 30m = 900 sq meters
             self._process_sub_resolution_timeseries(geom, lcms_series),
             self._process_large_parcel_timeseries(geom, lcms_series)
         )

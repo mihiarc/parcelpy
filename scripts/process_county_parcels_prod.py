@@ -148,7 +148,8 @@ class CountyParcelProcessorProd:
         # where keys are years (as strings) and values are land use classes.
         # We construct a new dictionary containing only the parcel ID and the
         # land use classifications.
-        return feature.set(ee.Dictionary(results).set('parcel_id', feature.get(self.parcel_id_field)))
+        # Note: We use PARCEL_ID here since we standardized the field name in _clean_properties
+        return feature.set(ee.Dictionary(results).set('PARCEL_ID', feature.get('PARCEL_ID')))
     
     def _process_large_parcel_timeseries(
         self,
@@ -245,6 +246,11 @@ class CountyParcelProcessorProd:
         if extra_columns:
             logger.info(f"Removing {len(extra_columns)} non-essential columns")
             parcels = parcels[essential_columns].copy()
+        
+        # Standardize parcel ID field name to PARCEL_ID
+        if self.parcel_id_field != 'PARCEL_ID':
+            logger.info(f"Renaming parcel ID field from '{self.parcel_id_field}' to 'PARCEL_ID'")
+            parcels = parcels.rename(columns={self.parcel_id_field: 'PARCEL_ID'})
         
         return parcels
 
@@ -465,8 +471,8 @@ def main():
     parser.add_argument(
         "--parcel-id-field",
         type=str,
-        default='PRCL_NBR',
-        help="Name of the column containing parcel IDs (default: PRCL_NBR)"
+        default='PARCEL_ID',
+        help="Name of the column containing parcel IDs (default: PARCEL_ID)"
     )
     
     args = parser.parse_args()

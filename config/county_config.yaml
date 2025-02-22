@@ -1,0 +1,34 @@
+# County-specific configurations
+
+# Parcel ID field names for each county
+parcel_id_fields:
+  BELT: "PIN"
+  BEMI: "PIN"
+  BIGS: "PARCEL_NUM"
+  KANA: "PRCL_NBR"  # From our previous work
+  MILL: "PRCL_NBR"  # From our previous work
+
+# County metadata
+counties:
+  BELT:
+    description: "Beltrami County"
+    avg_parcel_size_acres: null  # To be filled
+  BEMI:
+    description: "Becker-Mille Lacs County"
+    avg_parcel_size_acres: null
+  BIGS:
+    description: "Big Stone County"
+    avg_parcel_size_acres: null
+  KANA:
+    description: "Kanabec County"
+    avg_parcel_size_acres: null
+  MILL:
+    description: "Mille Lacs County"
+    avg_parcel_size_acres: null
+
+# Processing settings that might vary by county
+processing_settings:
+  # If we need to override default chunk sizes for specific counties
+  chunk_size_overrides:
+    # example:
+    # ANOK: 3000  # Smaller chunks for urban county with small parcels 

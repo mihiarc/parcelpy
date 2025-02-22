@@ -60,6 +60,14 @@ import yaml
 # Load config
 with open('config/ee_config.yaml', 'r') as f:
     EE_CONFIG = yaml.safe_load(f)
+
+# Load county config
+try:
+    with open('config/county_config.yaml', 'r') as f:
+        COUNTY_CONFIG = yaml.safe_load(f)
+except FileNotFoundError:
+    logger.warning("County config file not found. Will not be able to auto-detect parcel ID fields.")
+    COUNTY_CONFIG = {"parcel_id_fields": {}}
     
 # Constants
 DEFAULT_CHUNK_SIZE = EE_CONFIG['processing']['DEFAULT_CHUNK_SIZE']
@@ -439,6 +447,13 @@ def _convert_to_serializable(obj):
         return obj.tolist()
     return obj
 
+def get_county_parcel_id_field(county_name: str) -> str:
+    """Get the parcel ID field name for a county from config."""
+    county_name = county_name.upper()
+    if county_name in COUNTY_CONFIG['parcel_id_fields']:
+        return COUNTY_CONFIG['parcel_id_fields'][county_name]
+    return None
+
 def main():
     """Main execution function."""
     import argparse
@@ -484,8 +499,9 @@ def main():
     parser.add_argument(
         "--parcel-id-field",
         type=str,
-        required=True,
+        required=False,  # No longer required, will try to auto-detect
         help="""Name of the column containing parcel IDs. 
+        If not provided, will try to auto-detect from county config.
         To find this field name, you can run:
         python -c "import pandas as pd; print(pd.read_parquet('YOUR_INPUT_FILE').columns.tolist())"
         Common names: PIN, FIPS_PIN, PRCL_NBR, PARCEL_ID"""
@@ -501,6 +517,24 @@ def main():
         
         # Extract county name from input file path
         county_name = input_path.stem.split('_')[0]
+        
+        # If parcel ID field not provided, try to get from config
+        if not args.parcel_id_field:
+            config_field = get_county_parcel_id_field(county_name)
+            if config_field:
+                logger.info(f"Using parcel ID field '{config_field}' from county config")
+                args.parcel_id_field = config_field
+            else:
+                # Load parcel data to show available columns
+                parcels = gpd.read_parquet(args.input)
+                available_cols = parcels.columns.tolist()
+                raise ValueError(
+                    f"No parcel ID field provided and county '{county_name}' not found in config.\n"
+                    f"Available columns are: {available_cols}\n"
+                    "Please either:\n"
+                    "1. Provide --parcel-id-field argument, or\n"
+                    "2. Add the county to config/county_config.yaml"
+                )
         
         # Initialize processor
         processor = CountyParcelProcessorProd(

@@ -128,7 +128,7 @@ class CountyParcelProcessorProd:
     def process_parcel_ee(self, feature):
         """Process a single parcel using Earth Engine objects."""
         geom = feature.geometry()
-        area = ee.Number(feature.get('area_m2'))
+        area = feature.geometry().area()
         
         # Create time series image collection using server-side date filtering
         start_year = ee.Number(min(self.years))

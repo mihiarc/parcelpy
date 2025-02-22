@@ -142,15 +142,16 @@ class CountyParcelProcessorProd:
         
         # Process based on resolution
         results = ee.Algorithms.If(
-            area.lt(self.LCMS_RESOLUTION_THRESHOLD_M2),  # 30m x 30m = 900 sq meters
+            area.lt(EE_CONFIG['processing']['LCMS_RESOLUTION_THRESHOLD_M2']),  # 30m x 30m = 900 sq meters
             self._process_sub_resolution_timeseries(geom, lcms_series),
             self._process_large_parcel_timeseries(geom, lcms_series)
         )
         
-        return feature.set(results).set({
-            'area_m2': area,
-            'is_sub_resolution': area.lt(900)
-        })
+        # Extract the land use classifications.  'results' is a dictionary
+        # where keys are years (as strings) and values are land use classes.
+        # We construct a new dictionary containing only the parcel ID and the
+        # land use classifications.
+        return feature.set(ee.Dictionary(results).set('parcel_id', feature.get(self.parcel_id_field)))
     
     def _process_large_parcel_timeseries(
         self,
@@ -236,9 +237,9 @@ class CountyParcelProcessorProd:
         # Create a copy of the dataframe
         parcels = parcels.copy()
         
-        # Map PIN to parcel_id_field if it exists and needed
-        if 'PIN' in parcels.columns and self.parcel_id_field not in parcels.columns:
-            parcels[self.parcel_id_field] = parcels['PIN']
+        # Verify parcel ID field exists
+        if self.parcel_id_field not in parcels.columns:
+            raise ValueError(f"Parcel ID field '{self.parcel_id_field}' not found in input data")
         
         # Keep only essential columns
         essential_columns = ['geometry', self.parcel_id_field]
@@ -253,7 +254,6 @@ class CountyParcelProcessorProd:
     def _preprocess_parcels(self, county_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Preprocess parcels with optimizations and progress tracking."""
         logger.info("Starting parcel preprocessing...")
-        log_memory_usage()
         
         # Create copy and clean properties
         processed_parcels = self._clean_properties(county_parcels)
@@ -280,7 +280,6 @@ class CountyParcelProcessorProd:
         
         processed_parcels['geometry'] = simplified_geoms
         
-        log_memory_usage()
         return processed_parcels
     
     def _wait_for_available_task_slot(self):
@@ -321,7 +320,7 @@ class CountyParcelProcessorProd:
         logger.info(f"Processing {total_parcels} parcels in {num_chunks - start_chunk} remaining chunks")
         
         # Create export folder path with date
-        export_folder = f"GEE_LCMS_Exports/{self.county_name}_{datetime.now():%Y%m%d}"
+        export_folder = f"GEE_LCMS_Exports_{self.county_name}_{datetime.now():%Y%m%d}"
         logger.info(f"Exports will be saved to: {export_folder}")
         
         # Track task submissions
@@ -344,9 +343,23 @@ class CountyParcelProcessorProd:
                 # Process all parcels in the chunk for all years
                 results_fc = chunk_fc.map(self.process_parcel_ee)
                 
-                # Drop geometry before export to reduce payload size
-                results_no_geom = results_fc.map(lambda f: f.setGeometry(None))
-                
+                # Remove geometry before export.
+                results_no_geom = results_fc.select(['.*'], None, False) # select all properties, and drop the geometry.
+
+                # Estimate payload size
+                try:
+                    serialized_results = ee.Serializer.toJSON(results_no_geom)
+                    payload_size_bytes = sys.getsizeof(serialized_results.getInfo())
+                    payload_size_kb = payload_size_bytes / 1024
+                    payload_size_mb = payload_size_kb / 1024
+                    logger.info(f"Estimated payload size for chunk {chunk_idx}: {payload_size_bytes} bytes ({payload_size_kb:.2f} KB, {payload_size_mb:.2f} MB)")
+
+                except Exception as e:
+                    logger.error(f"Failed to estimate payload size for chunk {chunk_idx}: {e}")
+                    payload_size_bytes = -1  # Indicate failure
+                    payload_size_kb = -1
+                    payload_size_mb = -1
+
                 # Create and start export task
                 task = ee.batch.Export.table.toDrive(
                     collection=results_no_geom,  # Using version without geometry
@@ -368,7 +381,10 @@ class CountyParcelProcessorProd:
                     'status': 'submitted',
                     'chunk_size': chunk_size,
                     'timestamp': datetime.now().isoformat(),
-                    'export_folder': export_folder
+                    'export_folder': export_folder,
+                    'payload_size_bytes': payload_size_bytes,
+                    'payload_size_kb': payload_size_kb,
+                    'payload_size_mb': payload_size_mb
                 })
                 
                 logger.info(
@@ -388,7 +404,10 @@ class CountyParcelProcessorProd:
                     'error': str(e),
                     'chunk_size': chunk_size,
                     'timestamp': datetime.now().isoformat(),
-                    'export_folder': export_folder
+                    'export_folder': export_folder,
+                    'payload_size_bytes': payload_size_bytes,
+                    'payload_size_kb': payload_size_kb,
+                    'payload_size_mb': payload_size_mb
                 })
         
         return task_tracking

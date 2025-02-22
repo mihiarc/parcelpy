@@ -15,7 +15,8 @@ Key components:
      * start_year/end_year: Analysis time period (default 1985-2023)
      * county_name: Name of county being processed
      * max_concurrent_tasks: Limit on simultaneous GEE tasks (max is 3000)
-     * chunk_size: Number of parcels to process in each chunk (default: 50)
+     * chunk_size: Number of parcels to process in each chunk (default: 100)
+     * parcel_id_field: Name of the column containing parcel IDs (default: PRCL_NBR)
 
 3. Key Methods:
    - initialize_earth_engine(): Sets up GEE connection and loads data
@@ -80,7 +81,8 @@ class CountyParcelProcessorProd:
         end_year: int = 2023,
         county_name: str = None,
         max_concurrent_tasks: int = 3000,
-        chunk_size: int = 50
+        chunk_size: int = 100,
+        parcel_id_field: str = 'PRCL_NBR'
     ):
         """Initialize the processor with time range."""
         self.years = list(range(start_year, end_year + 1))
@@ -88,6 +90,7 @@ class CountyParcelProcessorProd:
         self.county_name = county_name.lower() if county_name else "county"
         self.max_concurrent_tasks = max_concurrent_tasks
         self.chunk_size = chunk_size
+        self.parcel_id_field = parcel_id_field
         self.initialize_earth_engine()
         
     def initialize_earth_engine(self):
@@ -117,10 +120,12 @@ class CountyParcelProcessorProd:
         geom = feature.geometry()
         area = ee.Number(feature.get('area_m2'))
         
-        # Create time series image collection
-        lcms_series = self.lcms_collection.filterDate(
-            f"{min(self.years)}-01-01",
-            f"{max(self.years)}-12-31"
+        # Create time series image collection using server-side date filtering
+        start_year = ee.Number(min(self.years))
+        end_year = ee.Number(max(self.years))
+        
+        lcms_series = self.lcms_collection.filter(
+            ee.Filter.calendarRange(start_year, end_year, 'year')
         )
         
         # Process based on resolution
@@ -219,21 +224,12 @@ class CountyParcelProcessorProd:
         # Create a copy of the dataframe
         parcels = parcels.copy()
         
-        # Map PIN to PRCL_NBR if it exists
-        if 'PIN' in parcels.columns and 'PRCL_NBR' not in parcels.columns:
-            parcels['PRCL_NBR'] = parcels['PIN']
-        
-        # Calculate area_m2 from Shape_Area if needed
-        if 'area_m2' not in parcels.columns:
-            if 'Shape_Area' in parcels.columns:
-                # Assuming Shape_Area is in square meters, adjust if it's in different units
-                parcels['area_m2'] = parcels['Shape_Area']
-            elif 'ACRES_POLY' in parcels.columns:
-                # Convert acres to square meters
-                parcels['area_m2'] = parcels['ACRES_POLY'] * 4046.86
+        # Map PIN to parcel_id_field if it exists and needed
+        if 'PIN' in parcels.columns and self.parcel_id_field not in parcels.columns:
+            parcels[self.parcel_id_field] = parcels['PIN']
         
         # Keep only essential columns
-        essential_columns = ['geometry', 'PRCL_NBR', 'area_m2']
+        essential_columns = ['geometry', self.parcel_id_field]
         extra_columns = [col for col in parcels.columns if col not in essential_columns]
         
         if extra_columns:
@@ -271,6 +267,9 @@ class CountyParcelProcessorProd:
             simplified_geoms.append(geom.simplify(1.0))
         
         processed_parcels['geometry'] = simplified_geoms
+        
+        # Calculate area in m2 from geometry
+        processed_parcels['area_m2'] = processed_parcels.geometry.area
         
         # Calculate size distribution
         size_distribution = np.histogram(processed_parcels.area_m2, 
@@ -322,6 +321,10 @@ class CountyParcelProcessorProd:
             logger.info(f"Resuming from chunk {start_chunk} (skipping {start_chunk} chunks)")
         logger.info(f"Processing {total_parcels} parcels in {num_chunks - start_chunk} remaining chunks")
         
+        # Create export folder path with date
+        export_folder = f"GEE_LCMS_Exports/{self.county_name}_{datetime.now():%Y%m%d}"
+        logger.info(f"Exports will be saved to: {export_folder}")
+        
         # Track task submissions
         task_tracking = []
         
@@ -342,11 +345,14 @@ class CountyParcelProcessorProd:
                 # Process all parcels in the chunk for all years
                 results_fc = chunk_fc.map(self.process_parcel_ee)
                 
+                # Drop geometry before export to reduce payload size
+                results_no_geom = results_fc.map(lambda f: f.setGeometry(None))
+                
                 # Create and start export task
                 task = ee.batch.Export.table.toDrive(
-                    collection=results_fc,
+                    collection=results_no_geom,  # Using version without geometry
                     description=f'{self.county_name}_chunk_{chunk_idx}',
-                    folder='GEE_LCMS_Exports',  # Using standard folder from config
+                    folder=export_folder,  # Using dated subfolder
                     fileNamePrefix=f'{self.county_name}_chunk_{chunk_idx}',
                     fileFormat='CSV'
                 )
@@ -362,7 +368,8 @@ class CountyParcelProcessorProd:
                     'task_id': task.id,
                     'status': 'submitted',
                     'chunk_size': chunk_size,
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'export_folder': export_folder
                 })
                 
                 logger.info(
@@ -381,7 +388,8 @@ class CountyParcelProcessorProd:
                     'status': 'failed',
                     'error': str(e),
                     'chunk_size': chunk_size,
-                    'timestamp': datetime.now().isoformat()
+                    'timestamp': datetime.now().isoformat(),
+                    'export_folder': export_folder
                 })
         
         return task_tracking
@@ -435,8 +443,14 @@ def main():
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=50,
-        help="Number of parcels to process in each chunk (default: 50)"
+        default=100,
+        help="Number of parcels to process in each chunk (default: 100)"
+    )
+    parser.add_argument(
+        "--parcel-id-field",
+        type=str,
+        default='PRCL_NBR',
+        help="Name of the column containing parcel IDs (default: PRCL_NBR)"
     )
     
     args = parser.parse_args()
@@ -456,7 +470,8 @@ def main():
             end_year=args.end_year,
             county_name=county_name,
             max_concurrent_tasks=args.max_concurrent_tasks,
-            chunk_size=args.chunk_size
+            chunk_size=args.chunk_size,
+            parcel_id_field=args.parcel_id_field
         )
         
         # Load county parcels

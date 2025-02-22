@@ -5,6 +5,7 @@ parcel_id_fields:
   BELT: "PIN"
   BEMI: "PIN"
   BIGS: "PARCEL_NUM"
+  CROW: "PIN"  # Added Crow County
   KANA: "PRCL_NBR"  # From our previous work
   MILL: "PRCL_NBR"  # From our previous work
 
@@ -18,6 +19,9 @@ counties:
     avg_parcel_size_acres: null
   BIGS:
     description: "Big Stone County"
+    avg_parcel_size_acres: null
+  CROW:
+    description: "Crow Wing County"
     avg_parcel_size_acres: null
   KANA:
     description: "Kanabec County"

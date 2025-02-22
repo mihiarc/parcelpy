@@ -2,12 +2,16 @@
 """
 This script processes county parcel data using Google Earth Engine (GEE) for land use analysis.
 
+Chunk size depends on the size of the parcels. Rural counties have larger parcels on average, so we can use a larger chunk size. Urban counties have smaller parcels, so we need to use a smaller chunk size.
+
+Example: Benton county mean parcel size is 138 acres and median size is 7 acres, we can safely use 6000 parcels per chunk. That's about 4MB of memory per chunk.
+
 Key components:
 
 1. Imports and Setup
    - Uses Earth Engine (ee), pandas, geopandas for geospatial processing
-   - Configures logging to track execution
-   - Includes memory usage monitoring
+   - Configures logging to track execution and payload size
+   - Uses yaml config file for processing parameters
 
 2. CountyParcelProcessorProd Class
    - Main class for processing county parcel datasets
@@ -15,14 +19,13 @@ Key components:
      * start_year/end_year: Analysis time period (default 1985-2023)
      * county_name: Name of county being processed
      * max_concurrent_tasks: Limit on simultaneous GEE tasks (max is 3000)
-     * chunk_size: Number of parcels to process in each chunk (default: 100)
-     * parcel_id_field: Name of the column containing parcel IDs (default: PRCL_NBR)
+     * chunk_size: Number of parcels to process in each chunk
+     * parcel_id_field: Name of the column containing parcel IDs
 
 3. Key Methods:
    - initialize_earth_engine(): Sets up GEE connection and loads data
    - process_county(): Main method to process all parcels
    - _preprocess_parcels(): Prepares parcel data for analysis
-   - _calculate_chunk_size(): Determines optimal batch size
    - _wait_for_available_task_slot(): Manages GEE task queue
 
 4. Processing Approach:
@@ -34,13 +37,7 @@ Key components:
 5. Output:
    - Generates analysis results for each parcel
    - Tracks land use changes over time
-   - Provides detailed logging and progress updates
-
-This production version is optimized for:
-- Memory efficiency with large datasets
-- Reliable GEE task management
-- Detailed progress tracking and logging
-- Error handling and recovery options
+   - exports only the parcel ID and land use classifications for each year.
 
 """
 
@@ -348,8 +345,9 @@ class CountyParcelProcessorProd:
 
                 # Estimate payload size
                 try:
-                    serialized_results = ee.Serializer.toJSON(results_no_geom)
-                    payload_size_bytes = sys.getsizeof(serialized_results.getInfo())
+                    # Use .serialize() for simpler serialization
+                    serialized_results = results_no_geom.serialize()
+                    payload_size_bytes = sys.getsizeof(serialized_results)
                     payload_size_kb = payload_size_bytes / 1024
                     payload_size_mb = payload_size_kb / 1024
                     logger.info(f"Estimated payload size for chunk {chunk_idx}: {payload_size_bytes} bytes ({payload_size_kb:.2f} KB, {payload_size_mb:.2f} MB)")

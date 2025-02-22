@@ -8,15 +8,15 @@ project:
 processing:
   max_pixels: 1000000000  # 1 billion pixels
   tile_scale: 4
-  max_tasks: 10
-  max_attempts: 3
+  max_tasks: 3000
+  max_attempts: 2
   retry_delay_seconds: 60
   error_margin: 0.1  # meters, for geometry operations
 
 # Export settings
 export:
   drive_folder: "GEE_LCMS_Exports"
-  file_format: "GeoTIFF"
+  file_format: "CSV"
   max_tile_size: 4096
   max_tile_pixels: 100000000
   cloud_storage:

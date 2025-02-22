@@ -3,7 +3,11 @@
 # Project paths
 paths:
   data_dir: "data"
-  output_dir: "outputs"
+  input_features_dir: "data/input_features"
+  ee_output:
+    raw_dir: "data/ee_output/raw_gee_output"
+    merged_dir: "data/ee_output/merged_gee_output"
+    analysis_dir: "data/ee_output/analysis"
   test_data_dir: "tests/data"
 
 # Logging configuration

@@ -34,14 +34,14 @@ analysis_classes:
     name: "Developed"
     color: "#ff4444"
     description: "Urban and developed areas"
-    min_area_threshold: 900
+    min_area_threshold: 900 # one LCMS pixel
     includes:
       - 2  # Developed
   3:  # Forest (combined with Non-Forest Wetland)
     name: "Forest"
     color: "#228b22"
     description: "Forest and woodland areas"
-    min_area_threshold: 900
+    min_area_threshold: 900 # one LCMS pixel
     includes:
       - 3  # Forest
       - 4  # Non-Forest Wetland

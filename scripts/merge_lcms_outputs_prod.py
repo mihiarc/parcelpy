@@ -18,13 +18,27 @@ import gc
 import os
 import traceback
 from collections import defaultdict
+import yaml
 
-# Set up logging
+def load_config():
+    """Load configuration from yaml files."""
+    config_dir = Path(__file__).parents[1] / 'config'
+    
+    # Load base config
+    with open(config_dir / 'base_config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    return config
+
+# Load configuration
+CONFIG = load_config()
+
+# Set up logging with config
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
+    level=getattr(logging, CONFIG['logging']['level']),
+    format=CONFIG['logging']['format'],
     handlers=[
-        logging.FileHandler(f'merge_lcms_prod_{datetime.now():%Y%m%d_%H%M%S}.log'),
+        logging.FileHandler(CONFIG['logging']['file']),
         logging.StreamHandler()
     ]
 )
@@ -51,10 +65,11 @@ LAND_USE_CODES = {
 class LCMSOutputMergerProd:
     """Production merger for large LCMS outputs with memory optimization."""
     
-    def __init__(self, input_dir: str, output_dir: str):
-        """Initialize the merger with input/output paths."""
-        self.input_dir = Path(input_dir)
-        self.output_dir = Path(output_dir)
+    def __init__(self, county_name: str):
+        """Initialize the merger with county name and paths from config."""
+        self.county_name = county_name.lower()
+        self.input_dir = Path(CONFIG['paths']['ee_output']['raw_dir']) / f"lcms_{self.county_name}_raw"
+        self.output_dir = Path(CONFIG['paths']['ee_output']['merged_dir']) / f"lcms_{self.county_name}_merged"
         self.logger = logging.getLogger(__name__)
         self.chunk_size = 50000
         self.processed_parcels = 0
@@ -187,15 +202,15 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Merge LCMS outputs with memory optimization")
-    parser.add_argument("input_dir", help="Directory containing LCMS output chunks")
-    parser.add_argument("output_dir", help="Directory to save merged results")
+    parser.add_argument("county_name", help="Name of the county to process (e.g., aitken, anoka)")
     
     args = parser.parse_args()
     
-    merger = LCMSOutputMergerProd(
-        input_dir=args.input_dir,
-        output_dir=args.output_dir
-    )
+    # Initialize merger with county name
+    merger = LCMSOutputMergerProd(county_name=args.county_name)
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(merger.output_dir, exist_ok=True)
     
     merger.process_and_save()
 

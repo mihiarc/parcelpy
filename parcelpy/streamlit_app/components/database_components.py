@@ -9,9 +9,6 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 
-# Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 from ..utils.session_state import SessionStateManager
 from ..utils.helpers import (
     display_error_message, display_success_message, 
@@ -19,10 +16,11 @@ from ..utils.helpers import (
 )
 
 try:
-    from viz.src.database_integration import DatabaseDataLoader
-    from viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
+    from parcelpy.viz.src.database_integration import DatabaseDataLoader
+    from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
 except ImportError as e:
     st.error(f"Failed to import required modules: {e}")
+    st.error("Make sure parcelpy is installed with viz dependencies: pip install parcelpy[viz]")
     st.stop()
 
 

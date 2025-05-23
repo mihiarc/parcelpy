@@ -13,10 +13,7 @@ import logging
 from pathlib import Path
 import sys
 
-# Add the parent directory to the path so we can import the database module
-sys.path.append(str(Path(__file__).parent.parent))
-
-from database import DatabaseManager, ParcelDB, SpatialQueries, DataIngestion, SchemaManager
+from parcelpy.database import DatabaseManager, ParcelDB, SpatialQueries, DataIngestion, SchemaManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

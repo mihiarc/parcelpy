@@ -16,16 +16,13 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import box
 
-# Add the parent directory to Python path to allow imports from database module
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 try:
-    from database.core.database_manager import DatabaseManager
-    from database.core.parcel_db import ParcelDB
-    from database.core.spatial_queries import SpatialQueries
+    from parcelpy.database.core.database_manager import DatabaseManager
+    from parcelpy.database.core.parcel_db import ParcelDB
+    from parcelpy.database.core.spatial_queries import SpatialQueries
 except ImportError as e:
     logging.error(f"Failed to import database modules: {e}")
-    logging.error("Make sure the database module is available in the parent directory")
+    logging.error("Make sure parcelpy is installed or available in PYTHONPATH")
     raise
 
 logger = logging.getLogger(__name__)
@@ -344,7 +341,7 @@ class DataBridge:
         
         # Initialize file-based loader as fallback
         try:
-            from data_loader import DataLoader
+            from .data_loader import DataLoader
             self.file_loader = DataLoader(data_dir)
             logger.info("File loader initialized successfully")
         except ImportError as e:

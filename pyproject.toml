@@ -1,0 +1,122 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parcelpy"
+version = "0.1.0"
+description = "A comprehensive toolkit for parcel data analysis and visualization"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "ParcelPy Development Team"}
+]
+keywords = ["gis", "parcels", "geospatial", "duckdb", "visualization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+# Core dependencies
+dependencies = [
+    "duckdb>=0.9.0",
+    "pandas>=1.5.0",
+    "geopandas>=0.12.0",
+    "shapely>=2.0.0",
+    "pyproj>=3.0.0",
+    "pyarrow>=8.0.0",
+    "tqdm>=4.64.0",
+    "psutil>=5.9.0",
+    "pyyaml",
+    "colorama>=0.4",
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+viz = [
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    "folium>=0.12.0",
+    "plotly>=5.0.0",
+    "ipywidgets>=7.6.0",
+]
+streamlit = [
+    "streamlit>=1.20.0",
+    "streamlit-folium>=0.6.0",
+    "streamlit-aggrid>=0.3.0",
+]
+earthengine = [
+    "earthengine-api",
+    "geemap>=0.20.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black",
+    "isort",
+    "flake8",
+    "mypy",
+]
+all = [
+    "parcelpy[viz,streamlit,earthengine]"
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/parcelpy"
+Documentation = "https://parcelpy.readthedocs.io"
+Repository = "https://github.com/yourusername/parcelpy"
+"Bug Tracker" = "https://github.com/yourusername/parcelpy/issues"
+
+[project.scripts]
+parcelpy-db = "parcelpy.database.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["parcelpy*"]
+exclude = ["tests*", "docs*"]
+
+[tool.setuptools.package-data]
+"parcelpy.database" = ["*.sql", "*.yaml"]
+"parcelpy.viz" = ["*.css", "*.js", "templates/*"]
+
+# Development tools configuration
+[tool.black]
+line-length = 88
+target-version = ['py38']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["parcelpy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=parcelpy --cov-report=html --cov-report=term-missing" 

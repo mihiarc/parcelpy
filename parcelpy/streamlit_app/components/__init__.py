@@ -2,10 +2,8 @@
 UI components for the ParcelPy Streamlit application.
 """
 
-from .database_components import *
-from .visualization_components import *
-from .map_components import *
-from .data_components import *
+# Import components only when needed to avoid relative import issues
+# Components will be imported directly in the main app
 
 __all__ = [
     "database_components",

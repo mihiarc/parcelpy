@@ -21,12 +21,9 @@ import seaborn as sns
 import folium
 from folium import plugins
 
-# Add parent directory to path for database imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from parcel_visualizer import ParcelVisualizer
-from database_integration import DatabaseDataLoader, QueryBuilder, DataBridge
-from census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
+from .parcel_visualizer import ParcelVisualizer
+from .database_integration import DatabaseDataLoader, QueryBuilder, DataBridge
+from .census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)

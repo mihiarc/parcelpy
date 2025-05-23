@@ -11,14 +11,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add the parent directory to Python path to allow imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from database.core.database_manager import DatabaseManager
-from database.core.parcel_db import ParcelDB
-from database.core.spatial_queries import SpatialQueries
-from database.utils.data_ingestion import DataIngestion
-from database.utils.schema_manager import SchemaManager
+from .core.database_manager import DatabaseManager
+from .core.parcel_db import ParcelDB
+from .core.spatial_queries import SpatialQueries
+from .utils.data_ingestion import DataIngestion
+from .utils.schema_manager import SchemaManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -1,0 +1,27 @@
+# Core geospatial stack
+geopandas>=0.12
+shapely>=2.0
+fiona>=1.8
+pyproj>=3.0
+pandas>=1.3
+earthengine-api
+
+# For reading/writing parquet
+pyarrow>=8.0
+
+# For progress bars and memory monitoring
+psutil
+tqdm
+matplotlib
+
+# For YAML config
+pyyaml
+
+# For colored logging (optional, for best experience)
+colorama>=0.4
+
+# For testing (if you run tests)
+pytest>=7.0
+
+# If you use Jupyter notebooks for exploration
+jupyterlab>=3.0 

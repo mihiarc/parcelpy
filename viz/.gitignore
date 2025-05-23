@@ -1,0 +1,15 @@
+# file formats
+*.png
+*.tif
+*.parquet
+*.pyc
+*.html
+
+# folders
+tests/
+.pytest_cache/
+output/
+preprocess/archive/
+
+# files
+.DS_Store

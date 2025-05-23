@@ -10,6 +10,7 @@ visualization modules, showcasing how to work with both data sources seamlessly.
 import sys
 import logging
 from pathlib import Path
+import numpy as np
 
 # Add viz module to path
 sys.path.insert(0, str(Path(__file__).parent / "viz" / "src"))
@@ -120,7 +121,7 @@ def demo_data_loading(visualizer, table_name):
         
         # Add common parcel attributes if they exist
         available_cols = sample_parcels.columns.tolist()
-        for attr in ['PARENTPIN', 'acres', 'Acres', 'parval', 'PARVAL', 'landuse', 'LANDUSE']:
+        for attr in ['parno', 'gisacres', 'parval', 'ownname', 'parusecode']:
             if attr in available_cols and attr not in key_attributes:
                 key_attributes.append(attr)
         
@@ -146,6 +147,17 @@ def demo_visualizations(visualizer, table_name, sample_parcels):
     print("="*60)
     
     try:
+        # Check if we have valid geometry bounds
+        if sample_parcels.empty or sample_parcels.geometry.isna().all():
+            print("⚠ No valid geometry data for visualization")
+            return False
+        
+        # Check bounds
+        bounds = sample_parcels.total_bounds
+        if not all(np.isfinite(bounds)):
+            print("⚠ Invalid geometry bounds for visualization")
+            return False
+        
         # 1. Create overview plot
         print("\n1. Creating overview plot...")
         overview_path = visualizer.plot_parcel_overview(
@@ -265,11 +277,23 @@ def demo_data_bridge():
         
         # 1. Load from database
         print("\n1. Loading from database via bridge...")
-        db_data = bridge.load_parcel_data({
-            'table_name': 'parcels',
-            'sample_size': 100
-        })
-        print(f"   Loaded {len(db_data)} parcels from database")
+        
+        # Get the actual table name from the database
+        if bridge.db_loader:
+            tables = bridge.db_loader.get_available_tables()
+            if tables:
+                table_name = tables[0]
+                db_data = bridge.load_parcel_data({
+                    'table_name': table_name,
+                    'sample_size': 100
+                })
+                print(f"   Loaded {len(db_data)} parcels from database")
+            else:
+                print("   No tables found in database")
+                return False
+        else:
+            print("   Database loader not available")
+            return False
         
         # 2. Load from file if available
         if parquet_files:

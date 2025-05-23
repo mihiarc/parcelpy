@@ -17,7 +17,7 @@ from typing import Optional, List, Dict, Any, Tuple
 import folium
 from folium import plugins
 import warnings
-from .census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
+from census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)

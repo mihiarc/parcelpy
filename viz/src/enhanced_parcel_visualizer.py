@@ -7,24 +7,26 @@ This module extends the original ParcelVisualizer with database integration capa
 allowing for more efficient data loading and querying from DuckDB databases.
 """
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.colors import Normalize
-import numpy as np
+import os
+import sys
+import logging
+from pathlib import Path
+from typing import Optional, Dict, List, Any, Union, Tuple
+import warnings
+
 import pandas as pd
 import geopandas as gpd
-from pathlib import Path
+import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import Optional, List, Dict, Any, Tuple, Union
 import folium
 from folium import plugins
-import warnings
-import logging
 
-# Import the original visualizer and database integration
-from .parcel_visualizer import ParcelVisualizer
-from .database_integration import DatabaseDataLoader, DataBridge, QueryBuilder
-from .census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
+# Add parent directory to path for database imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from parcel_visualizer import ParcelVisualizer
+from database_integration import DatabaseDataLoader, QueryBuilder, DataBridge
+from census_boundaries import CensusBoundaryFetcher, CensusBoundaryAnalyzer
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
@@ -424,6 +426,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
                                county_fips: Optional[str] = None,
                                bbox: Optional[Tuple[float, float, float, float]] = None,
                                attributes: Optional[List[str]] = None,
+                               sample_size: Optional[int] = None,
                                format: str = "parquet") -> None:
         """
         Export filtered parcels from database to file.
@@ -440,6 +443,8 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             Bounding box filter
         attributes : Optional[List[str]]
             Specific attributes to export
+        sample_size : Optional[int]
+            Number of parcels to sample
         format : str
             Output format ('parquet', 'geojson', 'shapefile')
         """
@@ -448,7 +453,8 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             table_name=table_name,
             county_fips=county_fips,
             bbox=bbox,
-            attributes=attributes
+            attributes=attributes,
+            sample_size=sample_size
         )
         
         if parcels.empty:

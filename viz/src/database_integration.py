@@ -41,29 +41,24 @@ class QueryBuilder:
         table_name: str = "parcels",
         county_fips: Optional[str] = None,
         bbox: Optional[Tuple[float, float, float, float]] = None,
-        attributes: Optional[List[str]] = None,
-        limit: Optional[int] = None,
-        sample_size: Optional[int] = None
+        sample_size: Optional[int] = None,
+        attributes: Optional[List[str]] = None
     ) -> str:
         """
-        Build a SQL query to retrieve parcels with optional filters.
+        Build a SQL query for loading parcel data.
         
         Args:
             table_name: Name of the parcels table
-            county_fips: Optional county FIPS code filter
-            bbox: Optional bounding box (minx, miny, maxx, maxy)
-            attributes: Optional list of specific attributes to select
-            limit: Optional limit on number of results
-            sample_size: Optional sample size for random sampling
+            county_fips: County FIPS code filter
+            bbox: Bounding box filter (minx, miny, maxx, maxy)
+            sample_size: Number of parcels to sample
+            attributes: List of specific attributes to select
             
         Returns:
             str: SQL query string
         """
         # Build SELECT clause
         if attributes:
-            # Ensure geometry is always included
-            if 'geometry' not in attributes and 'geom' not in attributes:
-                attributes.append('geometry')
             select_clause = f"SELECT {', '.join(attributes)}"
         else:
             select_clause = "SELECT *"
@@ -75,88 +70,51 @@ class QueryBuilder:
         where_conditions = []
         
         if county_fips:
-            # Try different possible county column names
-            county_columns = ['cntyfips', 'county_fips', 'fips_code', 'fips', 'cnty_fips']
-            county_condition = " OR ".join([f"{col} = '{county_fips}'" for col in county_columns])
-            where_conditions.append(f"({county_condition})")
+            where_conditions.append(f"cntyfips = '{county_fips}'")
         
         if bbox:
             minx, miny, maxx, maxy = bbox
-            # Use spatial index for efficient bbox filtering
-            bbox_condition = f"ST_Intersects(geometry, ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}))"
-            where_conditions.append(bbox_condition)
+            where_conditions.append(
+                f"ST_Intersects(ST_GeomFromWKB(geometry), ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}))"
+            )
         
         where_clause = ""
         if where_conditions:
             where_clause = f"WHERE {' AND '.join(where_conditions)}"
         
-        # Build ORDER BY and LIMIT clauses
-        order_limit_clause = ""
+        # Build SAMPLE clause (comes after WHERE in DuckDB)
+        sample_clause = ""
         if sample_size:
-            # Use TABLESAMPLE for efficient random sampling
-            order_limit_clause = f"USING SAMPLE {sample_size} ROWS"
-        elif limit:
-            order_limit_clause = f"LIMIT {limit}"
+            sample_clause = f"USING SAMPLE {sample_size} ROWS"
         
-        # Combine all clauses
-        query = f"{select_clause} {from_clause} {order_limit_clause} {where_clause}"
+        # Combine all clauses in correct order
+        query_parts = [select_clause, from_clause]
+        if where_clause:
+            query_parts.append(where_clause)
+        if sample_clause:
+            query_parts.append(sample_clause)
         
-        return query.strip()
+        query = " ".join(query_parts)
+        
+        return query
     
     @staticmethod
-    def build_summary_query(
-        table_name: str = "parcels",
-        group_by_column: Optional[str] = None,
-        aggregate_columns: Optional[Dict[str, str]] = None
-    ) -> str:
+    def build_summary_query(table_name: str, group_by_column: Optional[str] = None) -> str:
+        """Build a summary statistics query."""
+        base_query = f"""
+        SELECT 
+            COUNT(*) AS parcel_count,
+            SUM(gisacres) AS total_area,
+            AVG(gisacres) AS avg_area,
+            MIN(gisacres) AS min_area,
+            MAX(gisacres) AS max_area
+        FROM {table_name}
         """
-        Build a SQL query for summary statistics.
         
-        Args:
-            table_name: Name of the parcels table
-            group_by_column: Optional column to group by (e.g., county)
-            aggregate_columns: Dict of column_name -> aggregate_function
-            
-        Returns:
-            str: SQL query string
-        """
-        # Default aggregations
-        if aggregate_columns is None:
-            aggregate_columns = {
-                'parcel_count': 'COUNT(*)',
-                'total_area': 'SUM(acres)',
-                'avg_area': 'AVG(acres)',
-                'min_area': 'MIN(acres)',
-                'max_area': 'MAX(acres)'
-            }
-        
-        # Build SELECT clause
-        select_items = []
         if group_by_column:
-            select_items.append(group_by_column)
+            base_query += f" GROUP BY {group_by_column}"
         
-        for alias, agg_func in aggregate_columns.items():
-            select_items.append(f"{agg_func} AS {alias}")
-        
-        select_clause = f"SELECT {', '.join(select_items)}"
-        
-        # Build FROM clause
-        from_clause = f"FROM {table_name}"
-        
-        # Build GROUP BY clause
-        group_by_clause = ""
-        if group_by_column:
-            group_by_clause = f"GROUP BY {group_by_column}"
-        
-        # Build ORDER BY clause
-        order_by_clause = ""
-        if group_by_column:
-            order_by_clause = f"ORDER BY parcel_count DESC"
-        
-        # Combine all clauses
-        query = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
-        
-        return query.strip()
+        return base_query.strip()
 
 
 class DatabaseDataLoader:
@@ -213,8 +171,8 @@ class DatabaseDataLoader:
                 table_name=table_name,
                 county_fips=county_fips,
                 bbox=bbox,
-                attributes=attributes,
-                sample_size=sample_size
+                sample_size=sample_size,
+                attributes=attributes
             )
             
             logger.info(f"Loading parcels from database table '{table_name}'")
@@ -313,10 +271,10 @@ class DatabaseDataLoader:
         try:
             query = f"""
             SELECT 
-                ST_XMin(ST_Extent(geometry)) as minx,
-                ST_YMin(ST_Extent(geometry)) as miny,
-                ST_XMax(ST_Extent(geometry)) as maxx,
-                ST_YMax(ST_Extent(geometry)) as maxy
+                ST_XMin(ST_Extent(ST_GeomFromWKB(geometry))) as minx,
+                ST_YMin(ST_Extent(ST_GeomFromWKB(geometry))) as miny,
+                ST_XMax(ST_Extent(ST_GeomFromWKB(geometry))) as maxx,
+                ST_YMax(ST_Extent(ST_GeomFromWKB(geometry))) as maxy
             FROM {table_name}
             """
             
@@ -368,7 +326,7 @@ class DataBridge:
         
         # Initialize file-based loader as fallback
         try:
-            from .data_loader import DataLoader
+            from data_loader import DataLoader
             self.file_loader = DataLoader(data_dir)
             logger.info("File loader initialized successfully")
         except ImportError as e:

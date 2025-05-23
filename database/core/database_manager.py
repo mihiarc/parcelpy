@@ -139,41 +139,53 @@ class DatabaseManager:
                 # Assume the first geometry column is the primary geometry
                 geom_col = geometry_columns[0]
                 
-                # Convert BLOB geometry to WKT using DuckDB spatial functions, then to shapely
-                # We need to re-query with ST_AsText to get WKT format
-                if 'SELECT' in query.upper():
-                    # Replace the geometry column in the original query with ST_AsText conversion
-                    modified_query = query.replace(
-                        geom_col, 
-                        f"ST_AsText(ST_GeomFromWKB({geom_col})) as {geom_col}_wkt, {geom_col}"
-                    )
-                    
-                    # Execute the modified query
-                    df_with_wkt = self.execute_query(modified_query, parameters)
-                    
-                    # Convert WKT to shapely geometries
-                    from shapely import wkt
-                    wkt_col = f"{geom_col}_wkt"
-                    if wkt_col in df_with_wkt.columns:
-                        df_with_wkt[geom_col] = df_with_wkt[wkt_col].apply(
-                            lambda x: wkt.loads(x) if x is not None and x != '' else None
-                        )
-                        # Drop the WKT column as we don't need it anymore
-                        df_with_wkt = df_with_wkt.drop(columns=[wkt_col])
-                        df = df_with_wkt
-                    else:
-                        # Fallback: try to convert BLOB directly (this might fail)
-                        logger.warning("Could not convert geometry using ST_AsText, attempting direct conversion")
-                        from shapely import wkb
-                        df[geom_col] = df[geom_col].apply(
-                            lambda x: wkb.loads(bytes(x)) if x is not None else None
-                        )
-                else:
-                    # For non-SELECT queries, try direct conversion
+                # Try to convert BLOB geometry to shapely geometries
+                try:
+                    # First try to convert using WKB (Well-Known Binary)
                     from shapely import wkb
                     df[geom_col] = df[geom_col].apply(
                         lambda x: wkb.loads(bytes(x)) if x is not None else None
                     )
+                except Exception as wkb_error:
+                    logger.warning(f"Could not convert geometry using WKB: {wkb_error}")
+                    # If WKB fails, try to get WKT format with a separate query
+                    try:
+                        # Create a simple query to get WKT format for the geometries
+                        # We'll use the row IDs to match back to the original data
+                        if 'parno' in df.columns:
+                            id_col = 'parno'
+                        elif 'id' in df.columns:
+                            id_col = 'id'
+                        else:
+                            # Use row number as fallback
+                            df = df.reset_index()
+                            id_col = 'index'
+                        
+                        # Get unique IDs from the result
+                        ids = df[id_col].tolist()
+                        id_list = "', '".join([str(id) for id in ids])
+                        
+                        wkt_query = f"SELECT {id_col}, ST_AsText(ST_GeomFromWKB({geom_col})) as geometry_wkt FROM {query.split('FROM')[1].split('WHERE')[0].split('USING')[0].strip()} WHERE {id_col} IN ('{id_list}')"
+                        
+                        wkt_df = self.execute_query(wkt_query)
+                        
+                        # Merge WKT data back to original dataframe
+                        df = df.merge(wkt_df, on=id_col, how='left')
+                        
+                        # Convert WKT to shapely geometries
+                        from shapely import wkt
+                        df[geom_col] = df['geometry_wkt'].apply(
+                            lambda x: wkt.loads(x) if x is not None and x != '' else None
+                        )
+                        df = df.drop(columns=['geometry_wkt'])
+                        
+                    except Exception as wkt_error:
+                        logger.warning(f"Could not convert geometry using WKT: {wkt_error}")
+                        logger.warning("Attempting direct BLOB conversion")
+                        # Final fallback: try direct conversion
+                        df[geom_col] = df[geom_col].apply(
+                            lambda x: wkb.loads(bytes(x)) if x is not None else None
+                        )
                 
                 # Create GeoDataFrame
                 gdf = gpd.GeoDataFrame(df, geometry=geom_col)

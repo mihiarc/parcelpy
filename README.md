@@ -5,7 +5,7 @@
 [![GitHub issues](https://img.shields.io/github/issues/your-username/parcelpy.svg)](https://github.com/your-username/parcelpy/issues)
 [![Contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-ParcelPy is a comprehensive geospatial analysis toolkit designed for land use analysis within parcels using LCMS (Land Change Monitoring, Assessment, and Projection) data. The project provides a complete pipeline from data preprocessing to analysis and visualization of parcel geometry data against land use raster data.
+ParcelPy is a comprehensive geospatial analysis toolkit designed for land use analysis within parcels using LCMS (Land Change Monitoring, Assessment, and Projection) and publicly available parcel data. The project provides a complete pipeline from data preprocessing to analysis and visualization of parcel geometry data against land use raster data.
 
 ## Overview
 

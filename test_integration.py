@@ -194,9 +194,15 @@ def test_data_bridge():
             )
             print("✓ DataBridge initialized with database")
             
-            # Test data summary
-            summary = bridge.get_data_summary({'table_name': 'parcels'})
-            print(f"✓ Retrieved data summary: {summary['source_type']}")
+            # Get the actual table name from the database
+            tables = bridge.db_loader.get_available_tables() if bridge.db_loader else []
+            if tables:
+                table_name = tables[0]  # Use the first available table
+                # Test data summary
+                summary = bridge.get_data_summary({'table_name': table_name})
+                print(f"✓ Retrieved data summary: {summary['source_type']}")
+            else:
+                print("⚠ No tables found in database")
         else:
             bridge = DataBridge(data_dir=".")
             print("✓ DataBridge initialized without database")

@@ -83,8 +83,8 @@ def demo_data_loading(visualizer, table_name):
     print("="*60)
     
     try:
-        # 1. Load a sample of data
-        print("\n1. Loading sample data (1000 parcels)...")
+        # 1. Load a sample to understand the data extent
+        print("\n1. Loading sample data to understand extent...")
         sample_parcels = visualizer.load_parcels_from_database(
             table_name=table_name,
             sample_size=1000
@@ -93,34 +93,64 @@ def demo_data_loading(visualizer, table_name):
         print(f"   Columns: {list(sample_parcels.columns)}")
         print(f"   CRS: {sample_parcels.crs}")
         
-        # 2. Load data with bounding box filter
-        print("\n2. Loading data with bounding box filter...")
-        bounds = sample_parcels.total_bounds
-        # Create a smaller bounding box in the center
-        center_x = (bounds[0] + bounds[2]) / 2
-        center_y = (bounds[1] + bounds[3]) / 2
-        bbox_size = min(bounds[2] - bounds[0], bounds[3] - bounds[1]) * 0.1
+        # Get the overall bounds
+        overall_bounds = sample_parcels.total_bounds
+        print(f"   Overall bounds: {overall_bounds}")
         
-        bbox = (
-            center_x - bbox_size/2,
-            center_y - bbox_size/2,
-            center_x + bbox_size/2,
-            center_y + bbox_size/2
+        # 2. Create a focused bounding box for dense parcel visualization
+        print("\n2. Creating focused area for dense parcel visualization...")
+        
+        # Calculate a smaller bounding box in the center-east area (typically more dense)
+        center_x = (overall_bounds[0] + overall_bounds[2]) / 2
+        center_y = (overall_bounds[1] + overall_bounds[3]) / 2
+        
+        # Create a small focused area (about 1% of the total area)
+        width = (overall_bounds[2] - overall_bounds[0]) * 0.05  # 5% of width
+        height = (overall_bounds[3] - overall_bounds[1]) * 0.05  # 5% of height
+        
+        # Offset slightly towards the center-east where parcels are typically denser
+        offset_x = width * 0.3
+        offset_y = height * 0.1
+        
+        focused_bbox = (
+            center_x + offset_x - width/2,
+            center_y + offset_y - height/2,
+            center_x + offset_x + width/2,
+            center_y + offset_y + height/2
         )
         
-        bbox_parcels = visualizer.load_parcels_from_database(
+        print(f"   Focused bbox: {focused_bbox}")
+        
+        # Load parcels from the focused area
+        focused_parcels = visualizer.load_parcels_from_database(
             table_name=table_name,
-            bbox=bbox,
-            sample_size=500
+            bbox=focused_bbox
         )
-        print(f"   Loaded {len(bbox_parcels)} parcels within bounding box")
+        print(f"   Loaded {len(focused_parcels)} parcels in focused area")
         
-        # 3. Load specific attributes only
-        print("\n3. Loading specific attributes only...")
+        # If we don't get enough parcels, try a slightly larger area
+        if len(focused_parcels) < 50:
+            print("   Too few parcels, expanding search area...")
+            width *= 1.5
+            height *= 1.5
+            focused_bbox = (
+                center_x + offset_x - width/2,
+                center_y + offset_y - height/2,
+                center_x + offset_x + width/2,
+                center_y + offset_y + height/2
+            )
+            focused_parcels = visualizer.load_parcels_from_database(
+                table_name=table_name,
+                bbox=focused_bbox
+            )
+            print(f"   Loaded {len(focused_parcels)} parcels in expanded area")
+        
+        # 3. Load specific attributes from the focused area
+        print("\n3. Loading specific attributes from focused area...")
         key_attributes = ['geometry']
         
         # Add common parcel attributes if they exist
-        available_cols = sample_parcels.columns.tolist()
+        available_cols = focused_parcels.columns.tolist()
         for attr in ['parno', 'gisacres', 'parval', 'ownname', 'parusecode']:
             if attr in available_cols and attr not in key_attributes:
                 key_attributes.append(attr)
@@ -128,12 +158,13 @@ def demo_data_loading(visualizer, table_name):
         if len(key_attributes) > 1:
             attr_parcels = visualizer.load_parcels_from_database(
                 table_name=table_name,
-                attributes=key_attributes,
-                sample_size=500
+                bbox=focused_bbox,
+                attributes=key_attributes
             )
             print(f"   Loaded {len(attr_parcels)} parcels with attributes: {key_attributes}")
         
-        return sample_parcels, bbox_parcels
+        # Use the focused parcels for visualization instead of the scattered sample
+        return focused_parcels, focused_parcels
         
     except Exception as e:
         logger.error(f"Failed data loading demo: {e}")
@@ -148,57 +179,90 @@ def demo_visualizations(visualizer, table_name, sample_parcels):
     
     try:
         # Check if we have valid geometry bounds
-        if sample_parcels.empty or sample_parcels.geometry.isna().all():
-            print("⚠ No valid geometry data for visualization")
+        if sample_parcels.empty:
+            print("⚠ No parcel data available for visualization")
+            return False
+            
+        if sample_parcels.geometry.isna().all():
+            print("⚠ All geometry data is null")
             return False
         
+        # Check for valid geometries
+        valid_geoms = sample_parcels.geometry.notna()
+        valid_count = valid_geoms.sum()
+        print(f"   Found {valid_count}/{len(sample_parcels)} parcels with valid geometry")
+        
+        if valid_count == 0:
+            print("⚠ No valid geometries found for visualization")
+            return False
+        
+        # Filter to only valid geometries
+        valid_parcels = sample_parcels[valid_geoms].copy()
+        
         # Check bounds
-        bounds = sample_parcels.total_bounds
+        bounds = valid_parcels.total_bounds
+        print(f"   Geometry bounds: {bounds}")
+        
         if not all(np.isfinite(bounds)):
             print("⚠ Invalid geometry bounds for visualization")
             return False
         
-        # 1. Create overview plot
-        print("\n1. Creating overview plot...")
+        # Check if bounds are reasonable (not all the same point)
+        width = bounds[2] - bounds[0]  # max_x - min_x
+        height = bounds[3] - bounds[1]  # max_y - min_y
+        
+        if width == 0 or height == 0:
+            print(f"⚠ Zero-width or zero-height bounds: width={width}, height={height}")
+            return False
+        
+        print(f"   Working with {len(valid_parcels)} parcels in focused area")
+        print(f"   Area dimensions: {width:.2f} x {height:.2f}")
+        
+        # 1. Create overview plot - use all valid parcels since we're already in a focused area
+        print("\n1. Creating overview plot of focused area...")
         overview_path = visualizer.plot_parcel_overview(
-            sample_parcels,
-            sample_size=1000
+            valid_parcels,
+            sample_size=len(valid_parcels)  # Use all valid parcels in focused area
         )
         if overview_path:
             print(f"   Overview plot saved to: {overview_path}")
         
         # 2. Create attribute-based visualization if possible
-        numeric_columns = sample_parcels.select_dtypes(include=['number']).columns
+        numeric_columns = valid_parcels.select_dtypes(include=['number']).columns
         if len(numeric_columns) > 0:
             attr_col = numeric_columns[0]
             print(f"\n2. Creating attribute visualization for '{attr_col}'...")
             
             attr_path = visualizer.plot_attribute_choropleth(
-                sample_parcels,
+                valid_parcels,
                 attribute=attr_col,
-                sample_size=1000
+                sample_size=len(valid_parcels)  # Use all valid parcels in focused area
             )
             if attr_path:
                 print(f"   Attribute plot saved to: {attr_path}")
         
-        # 3. Create interactive map
+        # 3. Create interactive map - limit to reasonable number for performance
         print("\n3. Creating interactive map...")
+        map_sample_size = min(500, len(valid_parcels))  # Limit for performance but use focused area
         map_path = visualizer.create_interactive_map(
-            sample_parcels,
-            sample_size=500
+            valid_parcels,
+            sample_size=map_sample_size
         )
         if map_path:
             print(f"   Interactive map saved to: {map_path}")
+            print(f"   Map shows {map_sample_size} parcels from focused area")
         
         # 4. Generate summary report
         print("\n4. Generating summary report...")
-        report = visualizer.generate_summary_report(sample_parcels)
+        report = visualizer.generate_summary_report(valid_parcels)
         print(f"   Report generated with {len(report)} sections")
         
         return True
         
     except Exception as e:
         logger.error(f"Failed visualization demo: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 

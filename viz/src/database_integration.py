@@ -178,13 +178,31 @@ class DatabaseDataLoader:
             logger.info(f"Loading parcels from database table '{table_name}'")
             logger.debug(f"Query: {query}")
             
-            # Execute spatial query to get GeoDataFrame
+            # Execute the query
             parcels = self.db_manager.execute_spatial_query(query)
             
-            # Ensure we have a proper CRS
-            if parcels.crs is None:
+            # Set appropriate CRS based on coordinate values
+            if not parcels.empty and not parcels.geometry.isna().all():
+                # Check coordinate ranges to determine likely CRS
+                bounds = parcels.total_bounds
+                
+                # If coordinates are in the range typical for NC State Plane (feet)
+                # X: ~1.9M-2.3M, Y: ~600K-900K
+                if (1800000 < bounds[0] < 2400000 and 
+                    1800000 < bounds[2] < 2400000 and 
+                    500000 < bounds[1] < 1000000 and 
+                    500000 < bounds[3] < 1000000):
+                    # North Carolina State Plane (feet) - EPSG:2264
+                    parcels = parcels.set_crs('EPSG:2264')
+                    logger.info("Set CRS to NC State Plane (EPSG:2264) based on coordinate ranges")
+                else:
+                    # Default to WGS84 if ranges don't match known projections
+                    parcels = parcels.set_crs('EPSG:4326')
+                    logger.warning("No CRS found in database, setting to WGS84")
+            else:
+                # Default to WGS84 for empty or null geometry
+                parcels = parcels.set_crs('EPSG:4326')
                 logger.warning("No CRS found in database, setting to WGS84")
-                parcels = parcels.set_crs("EPSG:4326")
             
             # Calculate area in acres if not already present
             if 'acres' not in parcels.columns and 'Acres' not in parcels.columns:

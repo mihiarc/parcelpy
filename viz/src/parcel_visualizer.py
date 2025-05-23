@@ -98,7 +98,24 @@ class ParcelVisualizer:
             plot_parcels = parcels
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Calculate aspect ratio from data bounds to prevent squishing
+        bounds = plot_parcels.total_bounds
+        width = bounds[2] - bounds[0]  # max_x - min_x
+        height = bounds[3] - bounds[1]  # max_y - min_y
+        
+        # Set equal aspect ratio to prevent distortion
+        ax.set_aspect('equal')
+        
+        # Adjust figure size based on data aspect ratio
+        data_aspect = width / height if height > 0 else 1
+        if data_aspect > 1.5:  # Wide data
+            fig.set_size_inches(15, 8)
+        elif data_aspect < 0.67:  # Tall data
+            fig.set_size_inches(8, 12)
+        else:  # Roughly square data
+            fig.set_size_inches(10, 10)
         
         # Plot parcels
         plot_parcels.plot(ax=ax, 
@@ -167,7 +184,24 @@ class ParcelVisualizer:
             plot_parcels = valid_parcels
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Calculate aspect ratio from data bounds to prevent squishing
+        bounds = plot_parcels.total_bounds
+        width = bounds[2] - bounds[0]  # max_x - min_x
+        height = bounds[3] - bounds[1]  # max_y - min_y
+        
+        # Set equal aspect ratio to prevent distortion
+        ax.set_aspect('equal')
+        
+        # Adjust figure size based on data aspect ratio
+        data_aspect = width / height if height > 0 else 1
+        if data_aspect > 1.5:  # Wide data
+            fig.set_size_inches(15, 8)
+        elif data_aspect < 0.67:  # Tall data
+            fig.set_size_inches(8, 12)
+        else:  # Roughly square data
+            fig.set_size_inches(10, 10)
         
         # Plot choropleth
         plot_parcels.plot(column=attribute, 
@@ -282,7 +316,7 @@ class ParcelVisualizer:
     
     def create_interactive_map(self, parcels: gpd.GeoDataFrame,
                               attribute: Optional[str] = None,
-                              sample_size: int = 500) -> str:
+                              sample_size: int = 1000) -> str:
         """
         Create an interactive Folium map of parcels.
         
@@ -300,7 +334,7 @@ class ParcelVisualizer:
         str
             Path to saved HTML map
         """
-        # Sample parcels for performance
+        # Sample parcels for performance (use same default as static plots)
         if len(parcels) > sample_size:
             plot_parcels = parcels.sample(sample_size, random_state=42)
         else:
@@ -331,23 +365,81 @@ class ParcelVisualizer:
             if col != 'geometry' and clean_parcels[col].dtype == 'datetime64[ns, UTC]':
                 clean_parcels[col] = clean_parcels[col].astype(str)
         
-        # Get center point
+        # Get bounds and calculate center
         bounds = clean_parcels.total_bounds
-        center_lat = (bounds[1] + bounds[3]) / 2
-        center_lon = (bounds[0] + bounds[2]) / 2
         
-        # Create map
+        # Check if we need to transform coordinates for the map
+        # If CRS is projected (not geographic), we need to transform to lat/lon
+        if clean_parcels.crs and not clean_parcels.crs.is_geographic:
+            # Transform to WGS84 (EPSG:4326) for the map
+            parcels_wgs84 = clean_parcels.to_crs('EPSG:4326')
+            bounds_wgs84 = parcels_wgs84.total_bounds
+            center_lon = (bounds_wgs84[0] + bounds_wgs84[2]) / 2
+            center_lat = (bounds_wgs84[1] + bounds_wgs84[3]) / 2
+            
+            # Use geographic bounds for zoom calculation
+            lat_diff = bounds_wgs84[3] - bounds_wgs84[1]
+            lon_diff = bounds_wgs84[2] - bounds_wgs84[0]
+            max_diff = max(lat_diff, lon_diff)
+            
+            # Geographic coordinate thresholds
+            if max_diff > 1.0:
+                zoom_level = 8
+            elif max_diff > 0.5:
+                zoom_level = 9
+            elif max_diff > 0.1:
+                zoom_level = 10
+            elif max_diff > 0.05:
+                zoom_level = 11
+            elif max_diff > 0.01:
+                zoom_level = 12
+            elif max_diff > 0.005:
+                zoom_level = 13
+            else:
+                zoom_level = 14
+                
+            # Use the transformed parcels for the map
+            map_parcels = parcels_wgs84
+        else:
+            # Already in geographic coordinates
+            center_lon = (bounds[0] + bounds[2]) / 2
+            center_lat = (bounds[1] + bounds[3]) / 2
+            
+            # Calculate appropriate zoom level based on bounds
+            lat_diff = bounds[3] - bounds[1]  # max_lat - min_lat
+            lon_diff = bounds[2] - bounds[0]  # max_lon - min_lon
+            max_diff = max(lat_diff, lon_diff)
+            
+            # Geographic coordinate thresholds
+            if max_diff > 1.0:
+                zoom_level = 8
+            elif max_diff > 0.5:
+                zoom_level = 9
+            elif max_diff > 0.1:
+                zoom_level = 10
+            elif max_diff > 0.05:
+                zoom_level = 11
+            elif max_diff > 0.01:
+                zoom_level = 12
+            elif max_diff > 0.005:
+                zoom_level = 13
+            else:
+                zoom_level = 14
+                
+            map_parcels = clean_parcels
+        
+        # Create map with calculated zoom level
         m = folium.Map(
             location=[center_lat, center_lon],
-            zoom_start=10,
+            zoom_start=zoom_level,
             tiles='OpenStreetMap'
         )
         
         # Add parcels to map
-        if attribute and attribute in clean_parcels.columns:
+        if attribute and attribute in map_parcels.columns:
             # Create a simple colored map based on attribute values
             # Normalize the attribute values for coloring
-            attr_values = clean_parcels[attribute].dropna()
+            attr_values = map_parcels[attribute].dropna()
             if len(attr_values) > 0:
                 min_val = attr_values.min()
                 max_val = attr_values.max()
@@ -366,7 +458,7 @@ class ParcelVisualizer:
                         return 'red'
                 
                 # Add each parcel with color based on attribute
-                for idx, row in clean_parcels.iterrows():
+                for idx, row in map_parcels.iterrows():
                     color = get_color(row[attribute])
                     popup_text = f"{attribute}: {row[attribute]}"
                     if parcel_id_col:
@@ -385,17 +477,20 @@ class ParcelVisualizer:
         else:
             # Simple geometry without attribute coloring
             folium.GeoJson(
-                clean_parcels,
+                map_parcels,
                 style_function=lambda x: {
-                    'fillColor': 'blue',
-                    'color': 'black',
+                    'fillColor': 'lightblue',
+                    'color': 'darkblue',
                     'weight': 1,
-                    'fillOpacity': 0.5,
+                    'fillOpacity': 0.6,
                 }
             ).add_to(m)
         
+        # Don't use fit_bounds as it's causing zoom issues
+        # The calculated zoom level should be sufficient
+        
         # Add a legend if we have an attribute
-        if attribute and attribute in clean_parcels.columns:
+        if attribute and attribute in map_parcels.columns:
             legend_html = f'''
             <div style="position: fixed; 
                         bottom: 50px; left: 50px; width: 150px; height: 90px; 
@@ -521,7 +616,24 @@ class ParcelVisualizer:
             boundaries = boundaries.to_crs(plot_parcels.crs)
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Calculate aspect ratio from data bounds to prevent squishing
+        bounds = plot_parcels.total_bounds
+        width = bounds[2] - bounds[0]  # max_x - min_x
+        height = bounds[3] - bounds[1]  # max_y - min_y
+        
+        # Set equal aspect ratio to prevent distortion
+        ax.set_aspect('equal')
+        
+        # Adjust figure size based on data aspect ratio
+        data_aspect = width / height if height > 0 else 1
+        if data_aspect > 1.5:  # Wide data
+            fig.set_size_inches(15, 8)
+        elif data_aspect < 0.67:  # Tall data
+            fig.set_size_inches(8, 12)
+        else:  # Roughly square data
+            fig.set_size_inches(10, 10)
         
         # Plot boundaries first (background)
         boundaries.plot(ax=ax, 
@@ -602,7 +714,24 @@ class ParcelVisualizer:
             return None
         
         # Create the plot
-        fig, ax = plt.subplots(figsize=figsize)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+        
+        # Calculate aspect ratio from data bounds to prevent squishing
+        bounds = valid_boundaries.total_bounds
+        width = bounds[2] - bounds[0]  # max_x - min_x
+        height = bounds[3] - bounds[1]  # max_y - min_y
+        
+        # Set equal aspect ratio to prevent distortion
+        ax.set_aspect('equal')
+        
+        # Adjust figure size based on data aspect ratio
+        data_aspect = width / height if height > 0 else 1
+        if data_aspect > 1.5:  # Wide data
+            fig.set_size_inches(15, 8)
+        elif data_aspect < 0.67:  # Tall data
+            fig.set_size_inches(8, 12)
+        else:  # Roughly square data
+            fig.set_size_inches(10, 10)
         
         # Plot choropleth
         valid_boundaries.plot(column=value_col, 

@@ -8,6 +8,7 @@ Provides high-performance analytics on geospatial parcel datasets.
 from .core.database_manager import DatabaseManager
 from .core.parcel_db import ParcelDB
 from .core.spatial_queries import SpatialQueries
+from .core.census_integration import CensusIntegration
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
 
@@ -16,6 +17,7 @@ __all__ = [
     "DatabaseManager",
     "ParcelDB", 
     "SpatialQueries",
+    "CensusIntegration",
     "DataIngestion",
     "SchemaManager"
 ] 

@@ -1,37 +1,709 @@
+#!/usr/bin/env python3
 """
-Data Ingestion utilities for ParcelPy DuckDB integration.
+Enhanced Data Ingestion for ParcelPy Database Module
 
-Handles bulk loading and preprocessing of parcel data from various sources.
+This module provides robust data ingestion capabilities with proper CRS handling,
+data validation, and standardization following US geospatial best practices.
 """
 
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, List, Union, Optional
+from typing import Dict, Any, List, Union, Optional, Tuple
 import pandas as pd
 import geopandas as gpd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import glob
+from shapely.geometry import Point, Polygon, MultiPolygon
+import warnings
+
 from ..core.database_manager import DatabaseManager
+from ..crs_manager import database_crs_manager
+from ..config import DatabaseConfig
 
 logger = logging.getLogger(__name__)
 
 
 class DataIngestion:
     """
-    Utilities for ingesting parcel data into DuckDB from various sources.
+    Enhanced data ingestion with proper CRS handling and validation.
     
-    Supports batch processing, parallel loading, and data validation.
+    Follows US geospatial best practices:
+    - Automatic CRS detection and validation
+    - Standardization to WGS84 for storage
+    - Data quality validation
+    - Consistent schema mapping
     """
     
     def __init__(self, db_manager: DatabaseManager):
         """
-        Initialize DataIngestion with a database manager.
+        Initialize data ingestion.
         
         Args:
-            db_manager: DatabaseManager instance
+            db_manager: Database manager instance
         """
         self.db_manager = db_manager
+        self.crs_manager = database_crs_manager
+        
+        if not self.crs_manager:
+            raise ImportError("CRS manager is not available. Ensure geospatial libraries are installed.")
+    
+    def detect_and_validate_crs(self, gdf: gpd.GeoDataFrame, 
+                               source_file: Optional[Path] = None) -> Tuple[str, bool]:
+        """
+        Detect and validate the CRS of a GeoDataFrame.
+        
+        Args:
+            gdf: GeoDataFrame to analyze
+            source_file: Optional source file path for context
+            
+        Returns:
+            Tuple of (detected_crs, is_valid)
+        """
+        logger.info(f"Detecting CRS for data with {len(gdf)} records")
+        
+        # Check if CRS is already set
+        if gdf.crs is not None:
+            current_crs = gdf.crs.to_string()
+            logger.info(f"Existing CRS found: {current_crs}")
+            
+            # Validate that the CRS makes sense for the coordinate ranges
+            bounds = gdf.total_bounds
+            logger.info(f"Coordinate bounds: {bounds}")
+            
+            # Check if coordinates match the declared CRS
+            if current_crs == 'EPSG:4326':
+                # Should be geographic coordinates
+                if -180 <= bounds[0] <= 180 and -90 <= bounds[1] <= 90:
+                    logger.info("✅ CRS matches coordinate ranges (geographic)")
+                    return current_crs, True
+                else:
+                    logger.warning("⚠️ CRS is EPSG:4326 but coordinates appear projected")
+                    # Fall through to detection
+            else:
+                # Projected CRS - coordinates should be large numbers
+                if abs(bounds[0]) > 1000 or abs(bounds[1]) > 1000:
+                    logger.info("✅ CRS appears to match coordinate ranges (projected)")
+                    return current_crs, True
+                else:
+                    logger.warning("⚠️ Projected CRS but coordinates appear geographic")
+        
+        # Detect CRS based on coordinate ranges
+        bounds = gdf.total_bounds
+        min_x, min_y, max_x, max_y = bounds
+        
+        logger.info(f"Analyzing coordinate ranges: X({min_x:.2f}, {max_x:.2f}), Y({min_y:.2f}, {max_y:.2f})")
+        
+        # Check if coordinates are geographic
+        if -180 <= min_x <= 180 and -90 <= min_y <= 90:
+            logger.info("Coordinates appear to be geographic (WGS84)")
+            return self.crs_manager.WGS84, True
+        
+        # Check for North Carolina State Plane coordinates
+        if (1000000 <= min_x <= 1200000 and 700000 <= min_y <= 1000000):
+            logger.info("Coordinates suggest North Carolina State Plane (feet)")
+            # Test EPSG:3359 transformation
+            if self._test_nc_state_plane_transformation(gdf, 'EPSG:3359'):
+                return 'EPSG:3359', True
+        
+        # Check for other common NC projections
+        nc_crs_options = ['EPSG:3359', 'EPSG:3358', 'EPSG:2264']
+        for test_crs in nc_crs_options:
+            if self._test_nc_state_plane_transformation(gdf, test_crs):
+                logger.info(f"Detected CRS: {test_crs}")
+                return test_crs, True
+        
+        # Default fallback
+        logger.warning("Could not reliably detect CRS, defaulting to WGS84")
+        return self.crs_manager.WGS84, False
+    
+    def _test_nc_state_plane_transformation(self, gdf: gpd.GeoDataFrame, test_crs: str) -> bool:
+        """
+        Test if a CRS transformation produces valid North Carolina coordinates.
+        
+        Args:
+            gdf: GeoDataFrame to test
+            test_crs: CRS to test
+            
+        Returns:
+            True if transformation produces valid NC coordinates
+        """
+        try:
+            # Get a sample point
+            sample_geom = gdf.geometry.iloc[0]
+            if hasattr(sample_geom, 'centroid'):
+                centroid = sample_geom.centroid
+            else:
+                centroid = sample_geom
+            
+            # Create a temporary GeoDataFrame with the test CRS
+            temp_gdf = gpd.GeoDataFrame({'geometry': [centroid]}, crs=test_crs)
+            
+            # Transform to WGS84
+            temp_wgs84 = temp_gdf.to_crs('EPSG:4326')
+            
+            # Get coordinates
+            point = temp_wgs84.geometry.iloc[0]
+            lon, lat = point.x, point.y
+            
+            # Check if coordinates are valid for North Carolina
+            # Note: Handle potential coordinate swapping
+            valid_normal = self.crs_manager.validate_coordinates(lon, lat, "north_carolina")
+            valid_swapped = self.crs_manager.validate_coordinates(lat, lon, "north_carolina")
+            
+            if valid_normal or valid_swapped:
+                if valid_swapped and not valid_normal:
+                    logger.info(f"CRS {test_crs} produces valid coordinates (with X/Y swap)")
+                else:
+                    logger.info(f"CRS {test_crs} produces valid coordinates")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Error testing CRS {test_crs}: {e}")
+            return False
+    
+    def standardize_to_wgs84(self, gdf: gpd.GeoDataFrame, source_crs: str) -> gpd.GeoDataFrame:
+        """
+        Standardize GeoDataFrame to WGS84 for consistent storage.
+        
+        Args:
+            gdf: Source GeoDataFrame
+            source_crs: Detected source CRS
+            
+        Returns:
+            GeoDataFrame in WGS84
+        """
+        if source_crs == self.crs_manager.WGS84:
+            logger.info("Data already in WGS84, no transformation needed")
+            return gdf.copy()
+        
+        logger.info(f"Transforming from {source_crs} to WGS84")
+        
+        # Set the source CRS
+        gdf_with_crs = gdf.copy()
+        gdf_with_crs.crs = source_crs
+        
+        # Transform to WGS84
+        gdf_wgs84 = gdf_with_crs.to_crs(self.crs_manager.WGS84)
+        
+        # Validate transformation results
+        bounds = gdf_wgs84.total_bounds
+        if not (-180 <= bounds[0] <= 180 and -90 <= bounds[1] <= 90):
+            logger.warning("Transformation resulted in invalid geographic coordinates")
+            
+            # Try coordinate swapping if needed
+            logger.info("Attempting coordinate swap correction...")
+            gdf_wgs84_copy = gdf_wgs84.copy()
+            
+            # Swap X and Y coordinates
+            for idx, geom in gdf_wgs84_copy.geometry.items():
+                if geom is not None:
+                    if hasattr(geom, 'coords'):
+                        # Point geometry
+                        coords = list(geom.coords)
+                        swapped_coords = [(y, x) for x, y in coords]
+                        gdf_wgs84_copy.loc[idx, 'geometry'] = Point(swapped_coords[0])
+                    elif hasattr(geom, 'exterior'):
+                        # Polygon geometry
+                        exterior_coords = list(geom.exterior.coords)
+                        swapped_exterior = [(y, x) for x, y in exterior_coords]
+                        
+                        # Handle interior rings if present
+                        interior_rings = []
+                        for interior in geom.interiors:
+                            interior_coords = list(interior.coords)
+                            swapped_interior = [(y, x) for x, y in interior_coords]
+                            interior_rings.append(swapped_interior)
+                        
+                        gdf_wgs84_copy.loc[idx, 'geometry'] = Polygon(swapped_exterior, interior_rings)
+            
+            # Check if swapped coordinates are valid
+            swapped_bounds = gdf_wgs84_copy.total_bounds
+            if -180 <= swapped_bounds[0] <= 180 and -90 <= swapped_bounds[1] <= 90:
+                logger.info("✅ Coordinate swap correction successful")
+                gdf_wgs84 = gdf_wgs84_copy
+            else:
+                logger.error("❌ Could not correct coordinate transformation")
+        
+        logger.info(f"Transformation completed: {len(gdf_wgs84)} features in WGS84")
+        return gdf_wgs84
+    
+    def validate_geometry_quality(self, gdf: gpd.GeoDataFrame) -> Dict[str, Any]:
+        """
+        Validate geometry quality and fix common issues.
+        
+        Args:
+            gdf: GeoDataFrame to validate
+            
+        Returns:
+            Dictionary with validation results
+        """
+        logger.info("Validating geometry quality...")
+        
+        original_count = len(gdf)
+        
+        # Check for null geometries
+        null_geoms = gdf.geometry.isnull().sum()
+        
+        # Check for invalid geometries
+        invalid_geoms = (~gdf.geometry.is_valid).sum()
+        
+        # Fix invalid geometries
+        if invalid_geoms > 0:
+            logger.info(f"Fixing {invalid_geoms} invalid geometries...")
+            gdf['geometry'] = gdf.geometry.buffer(0)  # Common fix for invalid geometries
+            
+            # Re-check
+            still_invalid = (~gdf.geometry.is_valid).sum()
+            if still_invalid > 0:
+                logger.warning(f"{still_invalid} geometries remain invalid after buffer fix")
+        
+        # Check for empty geometries
+        empty_geoms = gdf.geometry.is_empty.sum()
+        
+        # Calculate areas for quality assessment
+        if gdf.crs and gdf.crs.to_string() != self.crs_manager.WGS84:
+            # Use original CRS for area calculation
+            areas = gdf.geometry.area
+        else:
+            # Transform to equal area projection for area calculation
+            gdf_albers = gdf.to_crs(self.crs_manager.US_ALBERS)
+            areas = gdf_albers.geometry.area * 0.000247105  # Convert to acres
+        
+        # Identify potential issues
+        very_small_parcels = (areas < 0.01).sum()  # Less than 0.01 acres
+        very_large_parcels = (areas > 10000).sum()  # More than 10,000 acres
+        
+        validation_results = {
+            'total_features': original_count,
+            'null_geometries': null_geoms,
+            'invalid_geometries_fixed': invalid_geoms,
+            'still_invalid_geometries': still_invalid if invalid_geoms > 0 else 0,
+            'empty_geometries': empty_geoms,
+            'very_small_parcels': very_small_parcels,
+            'very_large_parcels': very_large_parcels,
+            'mean_area_acres': areas.mean() if len(areas) > 0 else 0,
+            'median_area_acres': areas.median() if len(areas) > 0 else 0
+        }
+        
+        logger.info(f"Geometry validation completed: {validation_results}")
+        return validation_results
+    
+    def standardize_schema(self, gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Standardize column names and data types.
+        
+        Args:
+            gdf: Source GeoDataFrame
+            
+        Returns:
+            GeoDataFrame with standardized schema
+        """
+        logger.info("Standardizing schema...")
+        
+        # Column mapping for common parcel attributes
+        column_mapping = {
+            # Parcel identifiers
+            'parno': ['parno', 'parcel_no', 'parcel_number', 'pin', 'parcel_id'],
+            'altparno': ['altparno', 'alt_parno', 'alternate_parno', 'alt_pin'],
+            
+            # Owner information
+            'ownname': ['ownname', 'owner_name', 'owner', 'ownername'],
+            'ownfrst': ['ownfrst', 'owner_first', 'first_name'],
+            'ownlast': ['ownlast', 'owner_last', 'last_name'],
+            
+            # Valuation
+            'landval': ['landval', 'land_value', 'land_assessed_value'],
+            'improvval': ['improvval', 'improvement_value', 'improv_value'],
+            'parval': ['parval', 'total_value', 'assessed_value', 'totalval'],
+            
+            # Address information
+            'mailadd': ['mailadd', 'mail_address', 'mailing_address'],
+            'mcity': ['mcity', 'mail_city', 'mailing_city'],
+            'mstate': ['mstate', 'mail_state', 'mailing_state'],
+            'mzip': ['mzip', 'mail_zip', 'mailing_zip'],
+            'siteadd': ['siteadd', 'site_address', 'physical_address'],
+            'scity': ['scity', 'site_city', 'physical_city'],
+            
+            # Geographic attributes
+            'gisacres': ['gisacres', 'acres', 'acreage', 'area_acres'],
+            'cntyname': ['cntyname', 'county_name', 'county'],
+            'cntyfips': ['cntyfips', 'county_fips', 'fips_code'],
+            'stname': ['stname', 'state_name', 'state'],
+            
+            # Land use
+            'parusecode': ['parusecode', 'land_use_code', 'use_code'],
+            'parusedesc': ['parusedesc', 'land_use_desc', 'use_description'],
+            
+            # Transaction data
+            'saledate': ['saledate', 'sale_date', 'last_sale_date']
+        }
+        
+        # Create standardized DataFrame
+        standardized_gdf = gdf.copy()
+        
+        # Apply column mapping
+        columns_mapped = 0
+        for standard_name, possible_names in column_mapping.items():
+            for possible_name in possible_names:
+                if possible_name in standardized_gdf.columns:
+                    if standard_name != possible_name:
+                        standardized_gdf = standardized_gdf.rename(columns={possible_name: standard_name})
+                        columns_mapped += 1
+                        logger.debug(f"Mapped {possible_name} -> {standard_name}")
+                    break
+        
+        logger.info(f"Schema standardization completed: {columns_mapped} columns mapped")
+        return standardized_gdf
+    
+    def ingest_geospatial_file(self, 
+                              file_path: Union[str, Path],
+                              table_name: str,
+                              county_name: Optional[str] = None,
+                              if_exists: str = "replace",
+                              validate_quality: bool = True,
+                              standardize_schema: bool = True) -> Dict[str, Any]:
+        """
+        Ingest a geospatial file with proper CRS handling and validation.
+        
+        Args:
+            file_path: Path to the geospatial file
+            table_name: Name of the database table to create
+            county_name: Optional county name for metadata
+            if_exists: What to do if table exists ('replace', 'append', 'fail')
+            validate_quality: Whether to validate and fix geometry quality
+            standardize_schema: Whether to standardize column names
+            
+        Returns:
+            Dictionary with ingestion summary
+        """
+        file_path = Path(file_path)
+        logger.info(f"Starting ingestion of {file_path} -> {table_name}")
+        
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        try:
+            # Check file type and handle accordingly
+            file_suffix = file_path.suffix.lower()
+            
+            if file_suffix == '.parquet':
+                # Handle parquet files directly through database
+                return self._ingest_parquet_file(
+                    file_path=file_path,
+                    table_name=table_name,
+                    county_name=county_name,
+                    if_exists=if_exists,
+                    validate_quality=validate_quality,
+                    standardize_schema=standardize_schema
+                )
+            else:
+                # Handle other geospatial formats through GeoPandas
+                return self._ingest_geospatial_file_geopandas(
+                    file_path=file_path,
+                    table_name=table_name,
+                    county_name=county_name,
+                    if_exists=if_exists,
+                    validate_quality=validate_quality,
+                    standardize_schema=standardize_schema
+                )
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to ingest {file_path}: {e}")
+            raise
+    
+    def _ingest_parquet_file(self,
+                            file_path: Path,
+                            table_name: str,
+                            county_name: Optional[str] = None,
+                            if_exists: str = "replace",
+                            validate_quality: bool = True,
+                            standardize_schema: bool = True) -> Dict[str, Any]:
+        """
+        Ingest a parquet file that already contains geospatial data.
+        
+        Args:
+            file_path: Path to the parquet file
+            table_name: Name of the database table to create
+            county_name: Optional county name for metadata
+            if_exists: What to do if table exists ('replace', 'append', 'fail')
+            validate_quality: Whether to validate and fix geometry quality
+            standardize_schema: Whether to standardize column names
+            
+        Returns:
+            Dictionary with ingestion summary
+        """
+        logger.info(f"Reading parquet file...")
+        
+        # Read parquet file to check structure and CRS
+        import geopandas as gpd
+        import pandas as pd
+        
+        try:
+            # Try reading as GeoDataFrame first
+            gdf = gpd.read_parquet(file_path)
+            logger.info(f"Loaded {len(gdf)} features from parquet file")
+            
+            # Check CRS
+            if gdf.crs:
+                logger.info(f"Detected CRS: {gdf.crs}")
+                detected_crs = gdf.crs.to_string()
+                
+                # Validate coordinates
+                bounds = gdf.total_bounds
+                logger.info(f"Coordinate bounds: {bounds}")
+                
+                if detected_crs == 'EPSG:4326':
+                    if -180 <= bounds[0] <= 180 and -90 <= bounds[1] <= 90:
+                        logger.info("✅ Coordinates appear to be valid WGS84")
+                        crs_valid = True
+                    else:
+                        logger.warning("⚠️ CRS is WGS84 but coordinates appear projected")
+                        crs_valid = False
+                else:
+                    logger.info(f"Non-WGS84 CRS detected: {detected_crs}")
+                    crs_valid = False
+            else:
+                logger.warning("No CRS information found in parquet file")
+                detected_crs = "Unknown"
+                crs_valid = False
+            
+            # If CRS is not WGS84 or coordinates are invalid, transform
+            if not crs_valid and detected_crs != "Unknown":
+                logger.info("Attempting CRS transformation...")
+                gdf_wgs84 = self.standardize_to_wgs84(gdf, detected_crs)
+            elif detected_crs == self.crs_manager.WGS84:
+                gdf_wgs84 = gdf.copy()
+            else:
+                # Assume coordinates are already in a usable format
+                logger.warning("Using coordinates as-is - manual validation recommended")
+                gdf_wgs84 = gdf.copy()
+                if not gdf_wgs84.crs:
+                    gdf_wgs84.crs = self.crs_manager.WGS84
+            
+            # Validate geometry quality
+            validation_results = {}
+            if validate_quality:
+                validation_results = self.validate_geometry_quality(gdf_wgs84)
+            
+            # Standardize schema
+            if standardize_schema:
+                gdf_wgs84 = self.standardize_schema(gdf_wgs84)
+            
+            # Store in database using temporary parquet
+            logger.info(f"Storing data in table '{table_name}'...")
+            temp_parquet = DatabaseConfig.get_temp_path(f"{table_name}_temp.parquet")
+            gdf_wgs84.to_parquet(temp_parquet)
+            
+            # Create table from parquet
+            self.db_manager.create_table_from_parquet(table_name, temp_parquet, if_exists)
+            
+            # Clean up temp file
+            temp_parquet.unlink()
+            
+        except Exception as e:
+            logger.warning(f"Failed to read as GeoDataFrame: {e}")
+            logger.info("Attempting direct database loading...")
+            
+            # Fallback: load directly into database and validate afterward
+            self.db_manager.create_table_from_parquet(table_name, file_path, if_exists)
+            
+            # Get basic info
+            row_count = self.db_manager.get_table_count(table_name)
+            table_info = self.db_manager.get_table_info(table_name)
+            
+            # Try to validate coordinates if geometry column exists
+            validation_results = {}
+            detected_crs = "Unknown"
+            crs_valid = False
+            
+            with self.db_manager.get_connection() as conn:
+                conn.execute('INSTALL spatial; LOAD spatial;')
+                
+                # Check if geometry column exists
+                geom_columns = [col for col in table_info['column_name'] if 'geom' in col.lower()]
+                if geom_columns:
+                    geom_col = geom_columns[0]
+                    logger.info(f"Found geometry column: {geom_col}")
+                    
+                    try:
+                        # Sample coordinates to validate
+                        coord_sample = conn.execute(f'''
+                            SELECT 
+                                ST_X(ST_Centroid(ST_GeomFromWKB({geom_col}))) as lon,
+                                ST_Y(ST_Centroid(ST_GeomFromWKB({geom_col}))) as lat
+                            FROM {table_name} 
+                            WHERE {geom_col} IS NOT NULL
+                            LIMIT 5
+                        ''').fetchall()
+                        
+                        if coord_sample:
+                            valid_coords = 0
+                            for lon, lat in coord_sample:
+                                if -180 <= lon <= 180 and -90 <= lat <= 90:
+                                    valid_coords += 1
+                            
+                            if valid_coords == len(coord_sample):
+                                logger.info("✅ Coordinates appear to be in WGS84")
+                                detected_crs = self.crs_manager.WGS84
+                                crs_valid = True
+                            else:
+                                logger.warning("⚠️ Some coordinates appear invalid for WGS84")
+                        
+                    except Exception as coord_e:
+                        logger.warning(f"Could not validate coordinates: {coord_e}")
+            
+            gdf_wgs84 = None  # Not available in this path
+        
+        # Get final table info
+        row_count = self.db_manager.get_table_count(table_name)
+        table_info = self.db_manager.get_table_info(table_name)
+        
+        # Create summary
+        summary = {
+            "table_name": table_name,
+            "source_file": str(file_path),
+            "county_name": county_name,
+            "row_count": row_count,
+            "columns": len(table_info),
+            "file_size_mb": round(file_path.stat().st_size / (1024 * 1024), 2),
+            "source_crs": detected_crs,
+            "crs_detection_valid": crs_valid,
+            "target_crs": self.crs_manager.WGS84,
+            "validation_results": validation_results,
+            "schema": table_info.to_dict('records')
+        }
+        
+        logger.info(f"✅ Parquet ingestion completed: {row_count:,} records in table '{table_name}'")
+        return summary
+    
+    def _ingest_geospatial_file_geopandas(self,
+                                         file_path: Path,
+                                         table_name: str,
+                                         county_name: Optional[str] = None,
+                                         if_exists: str = "replace",
+                                         validate_quality: bool = True,
+                                         standardize_schema: bool = True) -> Dict[str, Any]:
+        """
+        Ingest a geospatial file using GeoPandas (for shapefiles, GeoJSON, etc.).
+        
+        This is the original enhanced ingestion method for non-parquet files.
+        """
+        # Read the file
+        logger.info(f"Reading {file_path.suffix} file...")
+        gdf = gpd.read_file(file_path)
+        
+        if gdf.empty:
+            raise ValueError(f"No data found in {file_path}")
+        
+        logger.info(f"Loaded {len(gdf)} features from {file_path}")
+        
+        # Detect and validate CRS
+        detected_crs, crs_valid = self.detect_and_validate_crs(gdf, file_path)
+        
+        # Standardize to WGS84 for storage
+        gdf_wgs84 = self.standardize_to_wgs84(gdf, detected_crs)
+        
+        # Validate geometry quality
+        validation_results = {}
+        if validate_quality:
+            validation_results = self.validate_geometry_quality(gdf_wgs84)
+        
+        # Standardize schema
+        if standardize_schema:
+            gdf_wgs84 = self.standardize_schema(gdf_wgs84)
+        
+        # Store in database
+        logger.info(f"Storing data in table '{table_name}'...")
+        
+        # Convert to format suitable for DuckDB
+        # Save as temporary parquet file
+        temp_parquet = DatabaseConfig.get_temp_path(f"{table_name}_temp.parquet")
+        gdf_wgs84.to_parquet(temp_parquet)
+        
+        # Create table from parquet
+        self.db_manager.create_table_from_parquet(table_name, temp_parquet, if_exists)
+        
+        # Clean up temp file
+        temp_parquet.unlink()
+        
+        # Get final table info
+        row_count = self.db_manager.get_table_count(table_name)
+        table_info = self.db_manager.get_table_info(table_name)
+        
+        # Create summary
+        summary = {
+            "table_name": table_name,
+            "source_file": str(file_path),
+            "county_name": county_name,
+            "row_count": row_count,
+            "columns": len(table_info),
+            "file_size_mb": round(file_path.stat().st_size / (1024 * 1024), 2),
+            "source_crs": detected_crs,
+            "crs_detection_valid": crs_valid,
+            "target_crs": self.crs_manager.WGS84,
+            "validation_results": validation_results,
+            "schema": table_info.to_dict('records')
+        }
+        
+        logger.info(f"✅ Ingestion completed successfully: {row_count:,} records in table '{table_name}'")
+        return summary
+    
+    def ingest_multiple_files(self,
+                             file_paths: List[Union[str, Path]],
+                             table_name: str,
+                             county_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Ingest multiple geospatial files into a single table.
+        
+        Args:
+            file_paths: List of file paths to ingest
+            table_name: Name of the database table to create
+            county_names: Optional list of county names (must match file_paths length)
+            
+        Returns:
+            Dictionary with ingestion summary
+        """
+        logger.info(f"Starting batch ingestion of {len(file_paths)} files -> {table_name}")
+        
+        if county_names and len(county_names) != len(file_paths):
+            raise ValueError("county_names length must match file_paths length")
+        
+        total_records = 0
+        successful_files = 0
+        failed_files = []
+        
+        for i, file_path in enumerate(file_paths):
+            county_name = county_names[i] if county_names else None
+            
+            try:
+                if_exists = "replace" if i == 0 else "append"
+                result = self.ingest_geospatial_file(
+                    file_path=file_path,
+                    table_name=table_name,
+                    county_name=county_name,
+                    if_exists=if_exists
+                )
+                
+                total_records += result['row_count']
+                successful_files += 1
+                
+            except Exception as e:
+                logger.error(f"Failed to ingest {file_path}: {e}")
+                failed_files.append(str(file_path))
+        
+        summary = {
+            "table_name": table_name,
+            "total_files": len(file_paths),
+            "successful_files": successful_files,
+            "failed_files": failed_files,
+            "total_records": total_records
+        }
+        
+        logger.info(f"✅ Batch ingestion completed: {successful_files}/{len(file_paths)} files, {total_records:,} total records")
+        return summary
     
     def ingest_directory(self, data_dir: Union[str, Path], 
                         pattern: str = "*.parquet",

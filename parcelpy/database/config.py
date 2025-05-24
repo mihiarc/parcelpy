@@ -8,10 +8,17 @@ connection settings, and environment variable overrides.
 import os
 from pathlib import Path
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DatabaseConfig:
-    """Configuration class for database paths and settings."""
+    """
+    Centralized configuration for ParcelPy database operations.
+    
+    Provides path management, environment variable support, and database settings.
+    """
     
     # Base directories
     BASE_DIR = Path(__file__).parent.parent.parent
@@ -35,6 +42,10 @@ class DatabaseConfig:
     # Default database settings
     DEFAULT_MEMORY_LIMIT = "4GB"
     DEFAULT_THREADS = 4
+    
+    # NC-specific configuration
+    NC_PARCEL_SOURCE_CRS = "EPSG:2264"  # NAD83 / North Carolina (ftUS) - confirmed from source geopackage
+    NC_CRS_DETECTION_COMPLETE = True
     
     @classmethod
     def ensure_directories(cls) -> None:
@@ -103,6 +114,38 @@ class DatabaseConfig:
         temp_dir = cls.BASE_DIR / "temp"
         temp_dir.mkdir(exist_ok=True)
         return temp_dir / filename
+
+    @classmethod
+    def set_nc_source_crs(cls, crs: str) -> None:
+        """
+        Set the detected NC parcel source CRS for consistent use.
+        
+        Args:
+            crs: Detected CRS string (e.g., 'EPSG:3359')
+        """
+        cls.NC_PARCEL_SOURCE_CRS = crs
+        cls.NC_CRS_DETECTION_COMPLETE = True
+        logger.info(f"NC parcel source CRS set to: {crs}")
+    
+    @classmethod
+    def get_nc_source_crs(cls) -> Optional[str]:
+        """
+        Get the cached NC parcel source CRS.
+        
+        Returns:
+            NC source CRS string or None if not detected yet
+        """
+        return cls.NC_PARCEL_SOURCE_CRS
+    
+    @classmethod
+    def is_nc_crs_detected(cls) -> bool:
+        """
+        Check if NC CRS has been detected and cached.
+        
+        Returns:
+            True if NC CRS is available
+        """
+        return cls.NC_CRS_DETECTION_COMPLETE
 
 
 class DatabasePaths:

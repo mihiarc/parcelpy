@@ -216,6 +216,9 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 if if_exists == "replace":
                     conn.execute(f"DROP TABLE IF EXISTS {table_name};")
+                    # Create table from parquet
+                    query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
+                    conn.execute(query)
                 elif if_exists == "fail":
                     # Check if table exists
                     result = conn.execute(
@@ -224,12 +227,27 @@ class DatabaseManager:
                     ).fetchone()
                     if result:
                         raise ValueError(f"Table {table_name} already exists")
+                    # Create table from parquet
+                    query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
+                    conn.execute(query)
+                elif if_exists == "append":
+                    # Check if table exists
+                    result = conn.execute(
+                        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
+                        [table_name]
+                    ).fetchone()
+                    if result:
+                        # Table exists, append data
+                        query = f"INSERT INTO {table_name} SELECT * FROM read_parquet('{parquet_path}');"
+                        conn.execute(query)
+                    else:
+                        # Table doesn't exist, create it
+                        query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
+                        conn.execute(query)
+                else:
+                    raise ValueError(f"Invalid if_exists value: {if_exists}. Must be 'replace', 'append', or 'fail'")
                 
-                # Create table from parquet
-                query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
-                conn.execute(query)
-                
-                logger.info(f"Created table '{table_name}' from {parquet_path}")
+                logger.info(f"{'Created' if if_exists != 'append' or not result else 'Appended to'} table '{table_name}' from {parquet_path}")
                 
         except Exception as e:
             logger.error(f"Failed to create table from parquet: {e}")

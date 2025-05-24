@@ -307,7 +307,7 @@ def create_all_counties_db(max_counties: int = None) -> Dict[str, Any]:
         print(f"\n📍 Processing {i+1}/{len(county_files)}: {county_name}")
         
         try:
-            if_exists = "append" if i > 0 else "replace"
+            if_exists = "replace" if i == 0 else "append"
             
             result = data_ingestion.ingest_geospatial_file(
                 file_path=county_file,
@@ -325,6 +325,7 @@ def create_all_counties_db(max_counties: int = None) -> Dict[str, Any]:
         except Exception as e:
             failed_counties.append(county_name)
             print(f"   ❌ Failed: {e}")
+            # Continue processing other counties even if one fails
     
     # Add comprehensive metadata
     with db_manager.get_connection() as conn:
@@ -364,8 +365,8 @@ def create_all_counties_db(max_counties: int = None) -> Dict[str, Any]:
         coord_sample = conn.execute('''
             SELECT 
                 cntyname,
-                ST_X(ST_Centroid(geometry)) as lon,
-                ST_Y(ST_Centroid(geometry)) as lat
+                ST_X(ST_Centroid(ANY_VALUE(geometry))) as lon,
+                ST_Y(ST_Centroid(ANY_VALUE(geometry))) as lat
             FROM nc_parcels 
             WHERE cntyname IS NOT NULL
             GROUP BY cntyname

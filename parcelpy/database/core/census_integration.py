@@ -219,12 +219,14 @@ class CensusIntegration:
                 for _, row in batch_df.iterrows():
                     try:
                         parcel_id = row['parcel_id']
-                        lat = row['centroid_lat']
-                        lon = row['centroid_lon']
+                        # NOTE: Due to coordinate swapping in our database, 
+                        # centroid_lon actually contains latitude and centroid_lat contains longitude
+                        lat = row['centroid_lon']  # This is actually latitude
+                        lon = row['centroid_lat']  # This is actually longitude
                         
                         # Validate coordinates are reasonable
                         if not self.crs_manager.validate_coordinates(lon, lat, "north_carolina"):
-                            logger.warning(f"Invalid coordinates for parcel {parcel_id}: ({lat}, {lon})")
+                            logger.warning(f"Invalid coordinates for parcel {parcel_id}: ({lon}, {lat})")
                             errors += 1
                             continue
                         

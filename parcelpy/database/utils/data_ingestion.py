@@ -501,20 +501,21 @@ class DataIngestion:
             self.db_manager.create_table_from_parquet(table_name, temp_parquet, if_exists)
             
             # Clean up temp file
-            temp_parquet.unlink()
+            if temp_parquet.exists():
+                temp_parquet.unlink()
             
         except Exception as e:
             logger.warning(f"Failed to read as GeoDataFrame: {e}")
-            logger.info("Attempting direct database loading...")
+            logger.info("Attempting direct database loading with CRS detection...")
             
-            # Fallback: load directly into database and validate afterward
+            # Load directly into database first
             self.db_manager.create_table_from_parquet(table_name, file_path, if_exists)
             
             # Get basic info
             row_count = self.db_manager.get_table_count(table_name)
             table_info = self.db_manager.get_table_info(table_name)
             
-            # Try to validate coordinates if geometry column exists
+            # Now detect CRS and transform if needed
             validation_results = {}
             detected_crs = "Unknown"
             crs_valid = False
@@ -528,32 +529,87 @@ class DataIngestion:
                     geom_col = geom_columns[0]
                     logger.info(f"Found geometry column: {geom_col}")
                     
-                    try:
-                        # Sample coordinates to validate
-                        coord_sample = conn.execute(f'''
+                    # For NC parcels, use known CRS (no detection needed)
+                    if (county_name and 'NC' in county_name.upper()) or 'nc_' in str(file_path).lower():
+                        # This is NC parcel data - use known CRS
+                        detected_crs = DatabaseConfig.get_nc_source_crs()  # EPSG:3359
+                        logger.info(f"Using known NC CRS: {detected_crs}")
+                    else:
+                        # Non-NC data, detect normally
+                        detected_crs = self.crs_manager.detect_source_crs(
+                            conn, table_name, geom_col, sample_size=10
+                        )
+                    
+                    if detected_crs and detected_crs != self.crs_manager.WGS84:
+                        logger.info(f"Detected CRS: {detected_crs}, transforming to WGS84...")
+                        
+                        # Create a new table with transformed coordinates
+                        temp_table = f"{table_name}_temp_transform"
+                        
+                        # Get the geometry expression based on column type
+                        lon_expr, lat_expr = self.crs_manager.get_centroid_wgs84(
+                            conn, detected_crs, geom_col, table_name
+                        )
+                        
+                        # Create transformed table
+                        transform_query = f"""
+                            CREATE TABLE {temp_table} AS
                             SELECT 
-                                ST_X(ST_Centroid(ST_GeomFromWKB({geom_col}))) as lon,
-                                ST_Y(ST_Centroid(ST_GeomFromWKB({geom_col}))) as lat
-                            FROM {table_name} 
-                            WHERE {geom_col} IS NOT NULL
-                            LIMIT 5
-                        ''').fetchall()
+                                *,
+                                ST_Transform({geom_col}, '{detected_crs}', '{self.crs_manager.WGS84}') as geometry_wgs84
+                            FROM {table_name}
+                        """
                         
-                        if coord_sample:
-                            valid_coords = 0
-                            for lon, lat in coord_sample:
-                                if -180 <= lon <= 180 and -90 <= lat <= 90:
-                                    valid_coords += 1
+                        try:
+                            conn.execute(transform_query)
                             
-                            if valid_coords == len(coord_sample):
-                                logger.info("✅ Coordinates appear to be in WGS84")
-                                detected_crs = self.crs_manager.WGS84
-                                crs_valid = True
-                            else:
-                                logger.warning("⚠️ Some coordinates appear invalid for WGS84")
-                        
-                    except Exception as coord_e:
-                        logger.warning(f"Could not validate coordinates: {coord_e}")
+                            # Replace original table with transformed version
+                            conn.execute(f"DROP TABLE {table_name}")
+                            conn.execute(f"ALTER TABLE {temp_table} RENAME TO {table_name}")
+                            
+                            # Drop the original geometry column and rename the transformed one
+                            conn.execute(f"ALTER TABLE {table_name} DROP COLUMN {geom_col}")
+                            conn.execute(f"ALTER TABLE {table_name} RENAME COLUMN geometry_wgs84 TO {geom_col}")
+                            
+                            logger.info("✅ CRS transformation completed successfully")
+                            crs_valid = True
+                            
+                            # Validate the transformation
+                            coord_sample = conn.execute(f'''
+                                SELECT 
+                                    ST_X(ST_Centroid({geom_col})) as lon,
+                                    ST_Y(ST_Centroid({geom_col})) as lat
+                                FROM {table_name} 
+                                WHERE {geom_col} IS NOT NULL
+                                LIMIT 5
+                            ''').fetchall()
+                            
+                            if coord_sample:
+                                valid_coords = 0
+                                for lon, lat in coord_sample:
+                                    if -180 <= lon <= 180 and -90 <= lat <= 90:
+                                        valid_coords += 1
+                                
+                                logger.info(f"Coordinate validation: {valid_coords}/{len(coord_sample)} valid")
+                                if valid_coords == len(coord_sample):
+                                    logger.info("✅ All transformed coordinates are valid WGS84")
+                                else:
+                                    logger.warning("⚠️ Some transformed coordinates may be invalid")
+                            
+                        except Exception as transform_e:
+                            logger.error(f"CRS transformation failed: {transform_e}")
+                            # Clean up temp table if it exists
+                            try:
+                                conn.execute(f"DROP TABLE IF EXISTS {temp_table}")
+                            except:
+                                pass
+                    
+                    elif detected_crs == self.crs_manager.WGS84:
+                        logger.info("✅ Data is already in WGS84")
+                        crs_valid = True
+                    
+                    else:
+                        logger.warning("⚠️ Could not detect CRS - coordinates may need manual validation")
             
             gdf_wgs84 = None  # Not available in this path
         

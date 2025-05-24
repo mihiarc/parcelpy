@@ -129,6 +129,22 @@ class DatabaseCRSManager:
             min_x, max_x, min_y, max_y = bounds_result
             logger.info(f"Coordinate bounds: X({min_x:.2f}, {max_x:.2f}), Y({min_y:.2f}, {max_y:.2f})")
             
+            # Check for North Carolina State Plane coordinates
+            # Expand range to cover the actual coordinate bounds we're seeing
+            if ((1900000 <= min_x <= 2200000 and 500000 <= min_y <= 700000) or  # Current data range
+                (1000000 <= min_x <= 1200000 and 700000 <= min_y <= 1000000)):   # Original range
+                logger.info("Coordinates suggest North Carolina State Plane (feet)")
+                # Test EPSG:3359 transformation
+                if self._test_crs_transformation(db_connection, table_name, geom_expr, 'EPSG:3359', sample_size):
+                    return 'EPSG:3359'
+            
+            # Check for other common NC projections with expanded ranges
+            nc_crs_options = ['EPSG:3359', 'EPSG:2264', 'EPSG:3358']
+            for test_crs in nc_crs_options:
+                if self._test_crs_transformation(db_connection, table_name, geom_expr, test_crs, sample_size):
+                    logger.info(f"✅ Detected CRS: {test_crs}")
+                    return test_crs
+            
             # Check if coordinates are already geographic (WGS84)
             if -180 <= min_x <= 180 and -90 <= min_y <= 90:
                 logger.info("Coordinates appear to be geographic (WGS84)")
@@ -311,8 +327,10 @@ class DatabaseCRSManager:
         Returns:
             True if coordinates are valid for the region
         """
-        if expected_region == "north_carolina":
-            return -85 <= longitude <= -75 and 33 <= latitude <= 37
+        if expected_region.lower() == "north_carolina":
+            # North Carolina bounds: approximately 33.7°N to 36.6°N, 84.3°W to 75.4°W
+            # Expand slightly for safety: 33°N to 37°N, 85°W to 75°W
+            return (33.0 <= latitude <= 37.0 and -85.0 <= longitude <= -75.0)
         elif expected_region == "us":
             return -180 <= longitude <= -60 and 15 <= latitude <= 72
         else:

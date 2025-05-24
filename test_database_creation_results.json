@@ -6,8 +6,20 @@
     "records": "19032",
     "columns": 68,
     "file_size_mb": 13.91,
-    "processing_time_seconds": 0.91,
+    "processing_time_seconds": 0.93,
     "coordinate_validity": "3/3",
+    "source_crs": "EPSG:2264",
+    "target_crs": "EPSG:4326"
+  },
+  "large_county": {
+    "database_type": "large_county",
+    "county": "Wake",
+    "database_path": "/Users/mihiarc/repos/parcelpy/databases/test/test_large_county_wake.duckdb",
+    "records": "259194",
+    "columns": 68,
+    "file_size_mb": 95.01,
+    "processing_time_seconds": 5.47,
+    "coordinate_validity": "5/5",
     "source_crs": "EPSG:2264",
     "target_crs": "EPSG:4326"
   }

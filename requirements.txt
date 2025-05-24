@@ -25,3 +25,5 @@ pytest>=7.0
 
 # If you use Jupyter notebooks for exploration
 jupyterlab>=3.0 
+
+duckdb

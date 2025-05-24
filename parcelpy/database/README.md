@@ -168,6 +168,47 @@ view_summary = schema_mgr.create_standardized_view(
 schema_mgr.export_schema_mapping("raw_parcels", "schema_mapping.json")
 ```
 
+### 6. CensusIntegration
+
+**NEW**: Integration with U.S. Census demographics using SocialMapper.
+
+```python
+from database import CensusIntegration
+
+# Initialize census integration
+census_integration = CensusIntegration(
+    parcel_db_manager=db_manager,
+    cache_boundaries=True
+)
+
+# Link parcels to census geographies
+geography_summary = census_integration.link_parcels_to_census_geographies(
+    parcel_table="parcels",
+    batch_size=1000
+)
+
+# Enrich with demographic data
+enrichment_summary = census_integration.enrich_parcels_with_census_data(
+    variables=['total_population', 'median_income', 'median_age'],
+    year=2021
+)
+
+# Create enriched view
+view_name = census_integration.create_enriched_parcel_view(
+    view_name="parcels_with_demographics"
+)
+
+# Query enriched data
+enriched_parcels = census_integration.get_parcels_with_demographics(
+    where_clause="median_income > 50000",
+    limit=1000
+)
+```
+
+**Requirements**: Requires `socialmapper>=0.4.0` and a Census API key.
+
+See [CENSUS_INTEGRATION.md](CENSUS_INTEGRATION.md) for detailed documentation.
+
 ## Data Ingestion Examples
 
 ### Single File Ingestion

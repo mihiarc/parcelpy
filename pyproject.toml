@@ -40,7 +40,7 @@ dependencies = [
     "psutil>=5.9.0",
     "pyyaml",
     "colorama>=0.4",
-    "socialmapper>=0.4.0",
+    "socialmapper>=0.4.2b0",
 ]
 
 # Optional dependencies

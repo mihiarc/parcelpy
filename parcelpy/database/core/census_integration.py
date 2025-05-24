@@ -15,6 +15,7 @@ from shapely.geometry import Point
 import warnings
 
 from .database_manager import DatabaseManager
+from ..crs_manager import database_crs_manager
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,15 @@ class CensusIntegration:
                 "Install with: pip install socialmapper"
             )
         
+        if not database_crs_manager:
+            raise ImportError(
+                "CRS manager is not available. Ensure geospatial libraries are installed."
+            )
+        
         self.parcel_db = parcel_db_manager
         self.census_db = get_census_database(census_db_path, cache_boundaries=cache_boundaries)
         self.census_data_manager = CensusDataManager(self.census_db)
+        self.crs_manager = database_crs_manager
         
         # Initialize census integration schema in parcel database
         self._setup_census_schema()
@@ -134,6 +141,31 @@ class CensusIntegration:
             Dictionary with processing summary
         """
         try:
+            # Detect source CRS by sampling coordinates
+            try:
+                sample_query = f"""
+                    SELECT 
+                        MIN(ST_X(ST_Centroid(geometry))) as min_x,
+                        MAX(ST_X(ST_Centroid(geometry))) as max_x,
+                        MIN(ST_Y(ST_Centroid(geometry))) as min_y,
+                        MAX(ST_Y(ST_Centroid(geometry))) as max_y
+                    FROM {parcel_table}
+                    WHERE geometry IS NOT NULL
+                    LIMIT 1000
+                """
+            except Exception as e:
+                logger.warning(f"Failed to detect source CRS: {e}")
+                return {"total_parcels": 0, "processed": 0, "errors": 0}
+            
+            # Set up CRS handling for the parcel table
+            with self.parcel_db.get_connection() as conn:
+                crs_info = self.crs_manager.setup_crs_for_table(
+                    conn, parcel_table, geometry_column
+                )
+                
+                logger.info(f"Detected source CRS: {crs_info['source_crs']}")
+                logger.info(f"Transformation needed: {crs_info['needs_transformation']}")
+            
             # Clear existing mappings if force refresh
             if force_refresh:
                 with self.parcel_db.get_connection() as conn:
@@ -165,12 +197,12 @@ class CensusIntegration:
             
             # Process parcels in batches
             for offset in range(0, total_parcels, batch_size):
-                # Get batch of parcels with centroids
+                # Get batch of parcels with centroids in WGS84
                 batch_query = f"""
                     SELECT 
                         {parcel_id_column} as parcel_id,
-                        ST_X(ST_Centroid({geometry_column})) as centroid_lon,
-                        ST_Y(ST_Centroid({geometry_column})) as centroid_lat
+                        {crs_info['longitude_expr']} as centroid_lon,
+                        {crs_info['latitude_expr']} as centroid_lat
                     FROM {parcel_table}
                     {where_clause}
                     LIMIT {batch_size} OFFSET {offset}
@@ -189,6 +221,12 @@ class CensusIntegration:
                         parcel_id = row['parcel_id']
                         lat = row['centroid_lat']
                         lon = row['centroid_lon']
+                        
+                        # Validate coordinates are reasonable
+                        if not self.crs_manager.validate_coordinates(lon, lat, "north_carolina"):
+                            logger.warning(f"Invalid coordinates for parcel {parcel_id}: ({lat}, {lon})")
+                            errors += 1
+                            continue
                         
                         # Get census geography for this point
                         geography = get_geography_from_point(lat, lon)
@@ -216,7 +254,11 @@ class CensusIntegration:
                 if geography_records:
                     geography_df = pd.DataFrame(geography_records)
                     with self.parcel_db.get_connection() as conn:
-                        conn.execute("INSERT INTO parcel_census_geography SELECT * FROM geography_df")
+                        conn.execute("""
+                            INSERT INTO parcel_census_geography 
+                            (parcel_id, state_fips, county_fips, tract_geoid, block_group_geoid, centroid_lat, centroid_lon)
+                            SELECT * FROM geography_df
+                        """)
                 
                 logger.info(f"Processed batch {offset//batch_size + 1}: {len(geography_records)} successful, {errors} errors")
             
@@ -224,7 +266,9 @@ class CensusIntegration:
                 "total_parcels": total_parcels,
                 "processed": processed,
                 "errors": errors,
-                "success_rate": round(processed / total_parcels * 100, 2) if total_parcels > 0 else 0
+                "success_rate": round(processed / total_parcels * 100, 2) if total_parcels > 0 else 0,
+                "source_crs": crs_info['source_crs'],
+                "transformation_applied": crs_info['needs_transformation']
             }
             
             logger.info(f"Census geography mapping completed: {processed:,} parcels processed, {errors} errors")

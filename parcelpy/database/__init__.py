@@ -11,6 +11,7 @@ from .core.spatial_queries import SpatialQueries
 from .core.census_integration import CensusIntegration
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
+from .crs_manager import DatabaseCRSManager, database_crs_manager
 
 __version__ = "0.1.0"
 __all__ = [
@@ -19,5 +20,7 @@ __all__ = [
     "SpatialQueries",
     "CensusIntegration",
     "DataIngestion",
-    "SchemaManager"
+    "SchemaManager",
+    "DatabaseCRSManager",
+    "database_crs_manager"
 ] 

@@ -58,10 +58,20 @@ class DatabaseConnectionComponent:
         if SessionStateManager.is_database_connected():
             st.success(f"✅ Connected to: {SessionStateManager.get_current_database()}")
             
+            # Get or create database loader
+            db_loader = SessionStateManager.get_database_loader()
+            
+            if not db_loader:
+                try:
+                    db_loader = DatabaseDataLoader(db_path=SessionStateManager.get_current_database())
+                    SessionStateManager.set_database_loader(db_loader)
+                except Exception as e:
+                    display_error_message(e, "Database connection error")
+                    SessionStateManager.set_database_connected(False)
+                    return None
+            
             # Database info
             try:
-                db_loader = DatabaseDataLoader(db_path=SessionStateManager.get_current_database())
-                
                 # Get available tables
                 tables = db_loader.get_available_tables()
                 SessionStateManager.set_available_tables(tables)
@@ -76,6 +86,7 @@ class DatabaseConnectionComponent:
             except Exception as e:
                 display_error_message(e, "Database connection error")
                 SessionStateManager.set_database_connected(False)
+                SessionStateManager.set_database_loader(None)
                 return None
         
         # Handle connection attempt
@@ -87,6 +98,7 @@ class DatabaseConnectionComponent:
                 
                 # Update session state
                 SessionStateManager.set_database_connected(True, db_path)
+                SessionStateManager.set_database_loader(db_loader)
                 SessionStateManager.set_available_tables(tables)
                 
                 display_success_message(f"Connected to database: {db_path}")
@@ -95,6 +107,7 @@ class DatabaseConnectionComponent:
             except Exception as e:
                 display_error_message(e, "Failed to connect to database")
                 SessionStateManager.set_database_connected(False)
+                SessionStateManager.set_database_loader(None)
         
         return None
 

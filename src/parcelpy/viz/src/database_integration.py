@@ -71,8 +71,9 @@ class QueryBuilder:
         
         if bbox:
             minx, miny, maxx, maxy = bbox
+            # Use geometry column directly - it's already GEOMETRY type in our database
             where_conditions.append(
-                f"ST_Intersects(ST_GeomFromWKB(geometry), ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}))"
+                f"ST_Intersects(geometry, ST_MakeEnvelope({minx}, {miny}, {maxx}, {maxy}))"
             )
         
         where_clause = ""

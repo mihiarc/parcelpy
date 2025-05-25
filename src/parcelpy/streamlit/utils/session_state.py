@@ -109,6 +109,12 @@ class SessionStateManager:
         return SessionStateManager.get('database_connected', False)
     
     @staticmethod
+    def has_database_connection() -> bool:
+        """Check if database connection is available."""
+        return (SessionStateManager.get('database_connected', False) and 
+                SessionStateManager.get('database_loader') is not None)
+    
+    @staticmethod
     def set_database_connected(connected: bool, db_path: Optional[str] = None) -> None:
         """
         Set database connection status.
@@ -120,6 +126,21 @@ class SessionStateManager:
         SessionStateManager.set('database_connected', connected)
         if db_path:
             SessionStateManager.set('current_database_path', db_path)
+    
+    @staticmethod
+    def set_database_loader(loader: Any) -> None:
+        """
+        Set database loader instance.
+        
+        Args:
+            loader: Database loader instance
+        """
+        SessionStateManager.set('database_loader', loader)
+    
+    @staticmethod
+    def get_database_loader() -> Any:
+        """Get database loader instance."""
+        return SessionStateManager.get('database_loader')
     
     @staticmethod
     def get_current_database() -> Optional[str]:
@@ -345,6 +366,39 @@ class SessionStateManager:
         """Clear all messages."""
         SessionStateManager.clear_error_messages()
         SessionStateManager.clear_success_messages()
+    
+    @staticmethod
+    def set_bbox_query_results(data: gpd.GeoDataFrame, bbox: tuple) -> None:
+        """
+        Set bounding box query results.
+        
+        Args:
+            data: Query results GeoDataFrame
+            bbox: Bounding box coordinates (minx, miny, maxx, maxy)
+        """
+        SessionStateManager.set('bbox_query_results', data)
+        SessionStateManager.set('bbox_query_bbox', bbox)
+    
+    @staticmethod
+    def get_bbox_query_results() -> Optional[tuple]:
+        """
+        Get bounding box query results.
+        
+        Returns:
+            Tuple of (data, bbox) or None if no results
+        """
+        data = SessionStateManager.get('bbox_query_results')
+        bbox = SessionStateManager.get('bbox_query_bbox')
+        
+        if data is not None and bbox is not None:
+            return (data, bbox)
+        return None
+    
+    @staticmethod
+    def clear_bbox_query_results() -> None:
+        """Clear bounding box query results."""
+        SessionStateManager.set('bbox_query_results', None)
+        SessionStateManager.set('bbox_query_bbox', None)
     
     @staticmethod
     def get_session_info() -> Dict[str, Any]:

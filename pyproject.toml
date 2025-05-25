@@ -83,6 +83,7 @@ Repository = "https://github.com/yourusername/parcelpy"
 parcelpy-db = "parcelpy.database.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["parcelpy*"]
 exclude = ["tests*", "docs*"]
 

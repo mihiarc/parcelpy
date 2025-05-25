@@ -47,7 +47,7 @@ class DatabaseConnectionComponent:
         with col1:
             db_path = st.text_input(
                 "Database Path",
-                value=SessionStateManager.get_current_database() or "../test_parcels.duckdb",
+                value=SessionStateManager.get_current_database() or "../../../test_parcels.duckdb",
                 help="Path to the DuckDB database file"
             )
         

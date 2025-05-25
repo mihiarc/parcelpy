@@ -4,27 +4,24 @@ Data-related UI components for the ParcelPy Streamlit application.
 
 import sys
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Union
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
+import plotly.express as px
+import plotly.graph_objects as go
 
-# Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ..utils.session_state import SessionStateManager
-from ..utils.helpers import (
+# Use absolute imports instead of relative imports
+from utils.session_state import SessionStateManager
+from utils.helpers import (
     display_error_message, display_success_message, 
     display_info_message, format_number, display_dataframe_info,
     create_download_link, create_summary_stats_table,
     validate_file_upload, save_uploaded_file
 )
-
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-except ImportError as e:
-    st.error(f"Failed to import plotting libraries: {e}")
 
 
 class DataPreviewComponent:

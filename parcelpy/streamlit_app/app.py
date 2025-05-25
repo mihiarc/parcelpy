@@ -12,12 +12,20 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 
+# Configure Streamlit page FIRST - before any other Streamlit commands
+st.set_page_config(
+    page_title="ParcelPy - Geospatial Parcel Analysis",
+    page_icon="🗺️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import utilities and components using relative imports
-from utils.config import setup_page_config, get_config
+from utils.config import get_config
 from utils.session_state import SessionStateManager, init_session_state
 from utils.helpers import (   
     display_error_message, display_success_message, 
@@ -30,8 +38,8 @@ from components.database_components import (
 )
 
 try:
-    from viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
-    from viz.src.database_integration import DatabaseDataLoader
+    from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
+    from parcelpy.viz.src.database_integration import DatabaseDataLoader
 except ImportError as e:
     st.error(f"Failed to import required modules: {e}")
     st.error("Please ensure the viz and database modules are available")
@@ -413,9 +421,6 @@ def render_settings_tab():
 
 def main():
     """Main application function."""
-    # Setup page configuration
-    setup_page_config()
-    
     # Initialize session state
     init_session_state()
     

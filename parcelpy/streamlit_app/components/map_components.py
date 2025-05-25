@@ -9,13 +9,14 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 
-# Add parent directories to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ..utils.session_state import SessionStateManager
-from ..utils.helpers import (
+# Use absolute imports instead of relative imports
+from utils.session_state import SessionStateManager
+from utils.helpers import (
     display_error_message, display_success_message, 
-    format_number, get_color_palette
+    display_info_message, format_number, display_dataframe_info
 )
 
 try:

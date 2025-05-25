@@ -312,15 +312,30 @@ class CensusIntegration:
             """
             bg_df = self.parcel_db.execute_query(bg_query)
             
+            # If no block groups, fall back to tracts
             if bg_df.empty:
-                raise ValueError("No parcel-census geography mappings found. Run link_parcels_to_census_geographies() first.")
-            
-            block_group_geoids = bg_df['block_group_geoid'].tolist()
-            logger.info(f"Fetching census data for {len(block_group_geoids)} block groups")
+                logger.info("No block group data available, using tract-level data")
+                tract_query = """
+                    SELECT DISTINCT tract_geoid 
+                    FROM parcel_census_geography 
+                    WHERE tract_geoid IS NOT NULL
+                """
+                tract_df = self.parcel_db.execute_query(tract_query)
+                
+                if tract_df.empty:
+                    raise ValueError("No parcel-census geography mappings found. Run link_parcels_to_census_geographies() first.")
+                
+                geoids = tract_df['tract_geoid'].tolist()
+                geography_level = 'tract'
+                logger.info(f"Fetching census data for {len(geoids)} tracts")
+            else:
+                geoids = bg_df['block_group_geoid'].tolist()
+                geography_level = 'block_group'
+                logger.info(f"Fetching census data for {len(geoids)} block groups")
             
             # Fetch census data for all block groups
             census_data = self.census_data_manager.get_or_fetch_census_data(
-                geoids=block_group_geoids,
+                geoids=geoids,
                 variables=normalized_vars,
                 year=year,
                 dataset=dataset,
@@ -329,7 +344,7 @@ class CensusIntegration:
             
             if census_data.empty:
                 logger.warning("No census data retrieved")
-                return {"block_groups": len(block_group_geoids), "variables": len(normalized_vars), "records": 0}
+                return {"block_groups": len(geoids), "variables": len(normalized_vars), "records": 0}
             
             # Clear existing census data if force refresh
             if force_refresh:
@@ -346,15 +361,23 @@ class CensusIntegration:
             enrichment_records = []
             
             for _, census_row in census_data.iterrows():
-                # Get parcels in this block group
-                parcel_query = f"""
-                    SELECT parcel_id 
-                    FROM parcel_census_geography 
-                    WHERE block_group_geoid = '{census_row['GEOID']}'
-                """
+                # Get parcels in this geography (block group or tract)
+                if geography_level == 'block_group':
+                    parcel_query = f"""
+                        SELECT parcel_id 
+                        FROM parcel_census_geography 
+                        WHERE block_group_geoid = '{census_row['GEOID']}'
+                    """
+                else:  # tract level
+                    parcel_query = f"""
+                        SELECT parcel_id 
+                        FROM parcel_census_geography 
+                        WHERE tract_geoid = '{census_row['GEOID']}'
+                    """
+                
                 parcel_df = self.parcel_db.execute_query(parcel_query)
                 
-                # Create records for each parcel in this block group
+                # Create records for each parcel in this geography
                 for parcel_id in parcel_df['parcel_id']:
                     enrichment_records.append({
                         'parcel_id': parcel_id,
@@ -372,7 +395,7 @@ class CensusIntegration:
                     conn.execute("INSERT OR REPLACE INTO parcel_census_data SELECT * FROM enrichment_df")
             
             summary = {
-                "block_groups": len(block_group_geoids),
+                "block_groups": len(geoids),
                 "variables": len(normalized_vars),
                 "census_records": len(census_data),
                 "parcel_enrichment_records": len(enrichment_records),

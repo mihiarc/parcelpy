@@ -9,8 +9,12 @@ import streamlit as st
 import pandas as pd
 import geopandas as gpd
 
-from ..utils.session_state import SessionStateManager
-from ..utils.helpers import (
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Use absolute imports instead of relative imports
+from utils.session_state import SessionStateManager
+from utils.helpers import (
     display_error_message, display_success_message, 
     display_info_message, format_number, display_dataframe_info
 )

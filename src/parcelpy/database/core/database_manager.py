@@ -37,6 +37,7 @@ class DatabaseManager:
         self.memory_limit = memory_limit
         self.threads = threads
         self._connection = None
+        self._extensions_loaded = False
         
         # Ensure database directory exists
         if self.db_path:
@@ -47,14 +48,35 @@ class DatabaseManager:
     def _initialize_database(self):
         """Initialize the database with required extensions and settings."""
         try:
-            with self.get_connection() as conn:
-                # Install and load spatial extension
-                conn.execute("INSTALL spatial;")
-                conn.execute("LOAD spatial;")
+            # Create initial connection for setup
+            if self.db_path:
+                conn = duckdb.connect(str(self.db_path))
+            else:
+                conn = duckdb.connect(":memory:")
+            
+            try:
+                # Install and load spatial extension (only once during initialization)
+                try:
+                    conn.execute("INSTALL spatial;")
+                    conn.execute("LOAD spatial;")
+                except Exception as e:
+                    # Extension might already be installed/loaded
+                    logger.debug(f"Spatial extension setup: {e}")
+                    try:
+                        conn.execute("LOAD spatial;")
+                    except Exception as e2:
+                        logger.debug(f"Could not load spatial extension: {e2}")
                 
                 # Install and load parquet extension
-                conn.execute("INSTALL parquet;")
-                conn.execute("LOAD parquet;")
+                try:
+                    conn.execute("INSTALL parquet;")
+                    conn.execute("LOAD parquet;")
+                except Exception as e:
+                    logger.debug(f"Parquet extension setup: {e}")
+                    try:
+                        conn.execute("LOAD parquet;")
+                    except Exception as e2:
+                        logger.debug(f"Could not load parquet extension: {e2}")
                 
                 # Configure DuckDB settings
                 conn.execute(f"SET memory_limit='{self.memory_limit}';")
@@ -65,6 +87,10 @@ class DatabaseManager:
                 
                 logger.info(f"Database initialized at {self.db_path or 'memory'}")
                 logger.info(f"Memory limit: {self.memory_limit}, Threads: {self.threads}")
+                self._extensions_loaded = True
+                
+            finally:
+                conn.close()
                 
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -85,9 +111,20 @@ class DatabaseManager:
             else:
                 conn = duckdb.connect(":memory:")
             
-            # Load extensions for this connection
-            conn.execute("LOAD spatial;")
-            conn.execute("LOAD parquet;")
+            # Try to load extensions for this connection, but handle conflicts gracefully
+            try:
+                conn.execute("LOAD spatial;")
+            except Exception as e:
+                # Check if it's the specific "already exists" error
+                if "already exists" in str(e):
+                    logger.debug(f"Spatial extension already loaded: {e}")
+                else:
+                    logger.debug(f"Could not load spatial extension: {e}")
+            
+            try:
+                conn.execute("LOAD parquet;")
+            except Exception as e:
+                logger.debug(f"Could not load parquet extension: {e}")
             
             yield conn
         finally:

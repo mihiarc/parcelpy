@@ -70,26 +70,27 @@ def test_bbox_query():
         return False
     
     # Test different bounding box sizes
+    # NOTE: Data bounds are [ 35.26 -79.11  35.44 -78.57] (lat/lon swapped in DB)
     test_cases = [
         {
-            "name": "Small Area (Wake County subset)",
-            "bbox": (-78.85, 35.75, -78.80, 35.80),  # ~5km x 5km area
+            "name": "Small Area (Actual data region)",
+            "bbox": (35.30, -79.05, 35.35, -79.00),  # Within actual data bounds
             "expected_area_km2": 25  # Should be under limit
         },
         {
-            "name": "Medium Area (Raleigh area)",
-            "bbox": (-78.95, 35.65, -78.75, 35.85),  # ~20km x 20km area
+            "name": "Medium Area (Full data extent)",
+            "bbox": (35.25, -79.12, 35.45, -78.55),  # Covers full data extent
             "expected_area_km2": 400  # Should be over limit
         },
         {
-            "name": "Tiny Area (Central NC)",
-            "bbox": (-78.70, 35.76, -78.68, 35.78),  # ~2km x 2km area
+            "name": "Tiny Area (Central data)",
+            "bbox": (35.32, -79.02, 35.34, -79.00),  # Small area within data
             "expected_area_km2": 4  # Should be well under limit
         },
         {
             "name": "Very Small Area (Sample data region)",
-            "bbox": (-78.82, 35.77, -78.80, 35.79),  # ~2km x 2km area in likely data region
-            "expected_area_km2": 4  # Should be well under limit
+            "bbox": (35.31, -78.58, 35.32, -78.57),  # Very small area in data region
+            "expected_area_km2": 1  # Should be well under limit
         }
     ]
     

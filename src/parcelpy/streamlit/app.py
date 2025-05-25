@@ -221,14 +221,15 @@ def render_map_viewer_tab():
         MAX_BBOX_AREA_KM2 = 100  # Maximum bounding box area in square kilometers
         MAX_PARCEL_LIMIT = 1000  # Maximum number of parcels to load
         
-        # Create a map centered on North Carolina
-        center_lat = 35.7796
-        center_lon = -78.6382
+        # Create a map centered on the actual data location
+        # Data bounds are approximately: [35.26, -79.11, 35.44, -78.57]
+        center_lat = 35.35  # Center of data latitude range
+        center_lon = -78.84  # Center of data longitude range
         
         # Create base map with OpenStreetMap tiles
         m = folium.Map(
             location=[center_lat, center_lon],
-            zoom_start=8,
+            zoom_start=11,  # Higher zoom to focus on data area
             tiles='OpenStreetMap'
         )
         
@@ -253,16 +254,29 @@ def render_map_viewer_tab():
         )
         draw.add_to(m)
         
-        # Add a reference marker
+        # Add a reference marker for data center
         folium.Marker(
             [center_lat, center_lon],
-            popup="North Carolina Center",
-            tooltip="Reference Point"
+            popup="Data Center",
+            tooltip="Center of Available Parcel Data"
+        ).add_to(m)
+        
+        # Add a rectangle showing the approximate data extent
+        data_bounds = [[35.26, -79.11], [35.44, -78.57]]  # SW, NE corners
+        folium.Rectangle(
+            bounds=data_bounds,
+            color='blue',
+            fill=False,
+            weight=2,
+            opacity=0.7,
+            popup="Approximate Data Extent",
+            tooltip="Available Parcel Data Area"
         ).add_to(m)
         
         # Display the map
         st.subheader("Interactive Spatial Query Map")
-        st.info("🎯 Draw a rectangle on the map to query parcels within that area")
+        st.info("🎯 Draw a rectangle **within the blue data extent area** to query parcels")
+        st.warning("⚠️ Data is only available within the blue rectangle shown on the map")
         
         # Instructions
         with st.expander("📋 Instructions", expanded=False):

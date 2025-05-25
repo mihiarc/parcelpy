@@ -365,50 +365,99 @@ class DatabaseSummaryComponent:
         st.subheader("📊 Database Summary")
         
         try:
-            # Get summary statistics
-            summary_query = f"""
-            SELECT 
-                COUNT(*) as total_records,
-                COUNT(DISTINCT cntyfips) as unique_counties,
-                SUM(gisacres) as total_area,
-                AVG(gisacres) as avg_area,
-                MIN(gisacres) as min_area,
-                MAX(gisacres) as max_area
-            FROM {table_name}
-            WHERE gisacres IS NOT NULL
-            """
+            # Get table schema to understand available columns
+            table_info = db_loader.get_table_info(table_name)
+            columns = table_info['column_name'].tolist()
             
-            summary_df = db_loader.db_manager.execute_query(summary_query)
+            # Basic record count (works for all tables)
+            basic_query = f"SELECT COUNT(*) as total_records FROM {table_name}"
+            basic_result = db_loader.db_manager.execute_query(basic_query)
             
-            if not summary_df.empty:
-                summary = summary_df.iloc[0]
+            if not basic_result.empty:
+                total_records = basic_result.iloc[0]['total_records']
                 
-                # Display metrics
+                # Always show total records
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
-                    st.metric("Total Records", format_number(summary['total_records'], 0))
+                    st.metric("Total Records", format_number(total_records, 0))
                 
-                with col2:
-                    st.metric("Counties", format_number(summary['unique_counties'], 0))
+                # Check for common parcel-related columns and add specific metrics
+                if 'cntyfips' in columns or 'county' in [c.lower() for c in columns]:
+                    county_col = 'cntyfips' if 'cntyfips' in columns else next((c for c in columns if 'county' in c.lower()), None)
+                    if county_col:
+                        county_query = f"SELECT COUNT(DISTINCT {county_col}) as unique_counties FROM {table_name} WHERE {county_col} IS NOT NULL"
+                        county_result = db_loader.db_manager.execute_query(county_query)
+                        if not county_result.empty:
+                            with col2:
+                                st.metric("Counties", format_number(county_result.iloc[0]['unique_counties'], 0))
                 
-                with col3:
-                    st.metric("Total Area", f"{format_number(summary['total_area'])} acres")
+                # Check for area-related columns
+                area_cols = [c for c in columns if any(term in c.lower() for term in ['acres', 'area', 'sqft'])]
+                if area_cols:
+                    area_col = area_cols[0]  # Use first area column found
+                    area_query = f"""
+                    SELECT 
+                        SUM({area_col}) as total_area,
+                        AVG({area_col}) as avg_area,
+                        MIN({area_col}) as min_area,
+                        MAX({area_col}) as max_area
+                    FROM {table_name} 
+                    WHERE {area_col} IS NOT NULL AND {area_col} > 0
+                    """
+                    area_result = db_loader.db_manager.execute_query(area_query)
+                    if not area_result.empty and not area_result.iloc[0].isna().all():
+                        area_data = area_result.iloc[0]
+                        unit = "acres" if "acres" in area_col.lower() else "sq units"
+                        
+                        with col3:
+                            st.metric("Total Area", f"{format_number(area_data['total_area'])} {unit}")
+                        
+                        with col4:
+                            st.metric("Avg Area", f"{format_number(area_data['avg_area'])} {unit}")
+                        
+                        # Additional area statistics
+                        col1_extra, col2_extra = st.columns(2)
+                        
+                        with col1_extra:
+                            st.metric("Min Area", f"{format_number(area_data['min_area'])} {unit}")
+                        
+                        with col2_extra:
+                            st.metric("Max Area", f"{format_number(area_data['max_area'])} {unit}")
                 
-                with col4:
-                    st.metric("Avg Area", f"{format_number(summary['avg_area'])} acres")
-                
-                # Additional statistics
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.metric("Min Area", f"{format_number(summary['min_area'])} acres")
-                
-                with col2:
-                    st.metric("Max Area", f"{format_number(summary['max_area'])} acres")
-        
+                # For non-parcel tables, show column information
+                if not any(col in columns for col in ['gisacres', 'acres', 'area']):
+                    with col2:
+                        st.metric("Columns", len(columns))
+                    
+                    with col3:
+                        # Show data types summary
+                        data_types = table_info['data_type'].value_counts()
+                        most_common_type = data_types.index[0] if not data_types.empty else "Mixed"
+                        st.metric("Primary Type", most_common_type)
+                    
+                    with col4:
+                        # Show if table has any null values
+                        null_check_cols = columns[:5]  # Check first 5 columns for nulls
+                        if null_check_cols:
+                            null_query = f"SELECT COUNT(*) as null_count FROM {table_name} WHERE " + " OR ".join([f"{col} IS NULL" for col in null_check_cols])
+                            try:
+                                null_result = db_loader.db_manager.execute_query(null_query)
+                                if not null_result.empty:
+                                    null_count = null_result.iloc[0]['null_count']
+                                    st.metric("Null Values", format_number(null_count, 0))
+                            except:
+                                st.metric("Data Quality", "Unknown")
+            
         except Exception as e:
-            display_error_message(e, "Failed to generate database summary")
+            # Show basic table info if summary fails
+            try:
+                table_info = db_loader.get_table_info(table_name)
+                st.info(f"📋 Table: {table_name}")
+                st.info(f"📊 Columns: {len(table_info)}")
+                st.warning("Detailed summary not available for this table type")
+            except:
+                display_error_message(e, "Failed to generate database summary")
 
 
 def render_database_sidebar(db_loader: Optional[DatabaseDataLoader] = None) -> Tuple[Optional[DatabaseDataLoader], Optional[str], Dict[str, Any]]:

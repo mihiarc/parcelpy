@@ -78,6 +78,10 @@ The following databases are available for testing:
 - Available tables appear in dropdown: `['database_metadata', 'nc_parcels', 'parcel_census_data', 'parcel_census_geography']`
 - Home tab Quick Stats update
 
+**Recent Fixes:**
+- ✅ **Database Summary Fixed**: No more "gisacres not found" errors
+- ✅ **Adaptive Summaries**: Different metrics for different table types
+
 **Known Issues:**
 - ⚠️ Some tables may have geometry compatibility issues (this doesn't affect table listing)
 
@@ -107,6 +111,43 @@ The following databases are available for testing:
 **Expected Behavior:**
 - Each table shows different column counts and structures
 - Row counts should display (may show "Unknown" for some tables)
+
+### 3.1. **📊 Database Summary Testing**
+
+**Prerequisites:** Database connected and table selected
+
+**What to Test:**
+- [ ] Summary expander appears in sidebar
+- [ ] No errors when expanding summary for any table
+- [ ] Appropriate metrics shown for each table type
+- [ ] Graceful handling of empty tables
+
+**Test Steps:**
+1. **Test with `database_metadata` table:**
+   - Expand "📊 Summary" in sidebar
+   - Expected: Total records (9), Columns (3), Primary Type, Null Values
+   - Should NOT show county or area metrics
+
+2. **Test with `nc_parcels` table:**
+   - Expand "📊 Summary" in sidebar
+   - Expected: Total records (100), Counties (1), Area statistics
+   - Should show: Total Area, Avg Area, Min/Max Area in acres
+
+3. **Test with `parcel_census_data` table:**
+   - Expand "📊 Summary" in sidebar
+   - Expected: Total records (0), basic table info
+   - Should handle empty table gracefully
+
+4. **Test with `parcel_census_geography` table:**
+   - Expand "📊 Summary" in sidebar
+   - Expected: Total records (50), Counties (1), no area metrics
+
+**Expected Results:**
+- ✅ No "gisacres not found" or similar column errors
+- ✅ Each table shows relevant metrics based on its schema
+- ✅ Empty tables handled without errors
+- ✅ Parcel tables show rich area and county statistics
+- ✅ Non-parcel tables show appropriate basic metrics
 
 ---
 
@@ -331,6 +372,11 @@ The following databases are available for testing:
   - Try absolute path instead of relative path
   - Verify you're running from correct directory: `src/parcelpy/streamlit/`
 
+### Database Summary Errors (FIXED)
+- **Symptom:** "Referenced column 'gisacres' not found" or similar errors
+- **Status:** ✅ **RESOLVED** - Component now adapts to table schemas
+- **Fix Applied:** Smart column detection and adaptive queries
+
 ### Geometry Data Issues
 - **Symptom:** Data loading fails with geometry errors
 - **Current Status:** Known limitation with current database format
@@ -369,19 +415,22 @@ Your app is working correctly if:
 
 1. **✅ Database Integration:** Can connect to DuckDB files and list tables
 2. **✅ Table Browsing:** Can view table information and schema
-3. **⚠️ Data Loading:** Basic data loading works (geometry issues are known)
-4. **⚠️ Visualization:** Limited by geometry data compatibility
-5. **✅ Session Management:** State persists across tab navigation
-6. **✅ Configuration:** Settings and filters work correctly
+3. **✅ Database Summaries:** Shows adaptive metrics for all table types
+4. **⚠️ Data Loading:** Basic data loading works (geometry issues are known)
+5. **⚠️ Visualization:** Limited by geometry data compatibility
+6. **✅ Session Management:** State persists across tab navigation
+7. **✅ Configuration:** Settings and filters work correctly
 
 ## 🔧 Current Status Summary
 
 ### ✅ **Working Components:**
 - Package structure and imports
 - Database connection and table listing
+- **Database summary component (FIXED)**
 - Session state management
 - Basic UI components and navigation
 - Configuration management
+- Table schema inspection and adaptive queries
 
 ### ⚠️ **Known Limitations:**
 - Geometry data loading compatibility issues
@@ -389,9 +438,14 @@ Your app is working correctly if:
 - Some analytics features depend on successful data loading
 
 ### 🎯 **Testing Priority:**
-1. **High Priority:** Database connection, table listing, basic navigation
+1. **High Priority:** Database connection, table listing, database summaries ✅
 2. **Medium Priority:** Non-geometry data loading, basic analytics
 3. **Low Priority:** Map visualization, geometry-dependent features
+
+### 🆕 **Recent Improvements:**
+- **Database Summary Component**: Now adapts to different table schemas
+- **Error Handling**: No more hardcoded column name errors
+- **Smart Metrics**: Shows relevant statistics based on available columns
 
 ---
 
@@ -442,13 +496,38 @@ Use this template to document your testing:
 
 ---
 
+## 🧪 Quick Verification Scripts
+
+Before starting manual testing, run these verification scripts:
+
+### Database Summary Component Test
+```bash
+# Test the fixed database summary component
+python test_summary_fix.py
+```
+**Expected Output:**
+- ✅ All tables tested successfully
+- ✅ No column errors
+- ✅ Appropriate metrics for each table type
+
+### Basic Database Connection Test
+```bash
+# Test basic database functionality
+python test_streamlit_db.py
+```
+**Expected Output:**
+- ✅ Database connection successful
+- ✅ Tables listed correctly
+- ⚠️ Geometry loading may fail (expected)
+
 ## 🔄 Next Steps
 
 After completing this testing:
 
-1. **✅ Verify Core Functionality:** Database connection and table browsing
-2. **🔧 Address Geometry Issues:** Fix data loading compatibility
-3. **📊 Test Analytics:** Once data loading is resolved
-4. **🗺️ Test Mapping:** After geometry issues are fixed
-5. **🚀 Performance Optimization:** Tune for larger datasets
-6. **📖 Documentation:** Update based on testing results 
+1. **✅ Verify Core Functionality:** Database connection and table browsing ✅
+2. **✅ Verify Database Summaries:** Test adaptive summary component ✅
+3. **🔧 Address Geometry Issues:** Fix data loading compatibility
+4. **📊 Test Analytics:** Once data loading is resolved
+5. **🗺️ Test Mapping:** After geometry issues are fixed
+6. **🚀 Performance Optimization:** Tune for larger datasets
+7. **📖 Documentation:** Update based on testing results 

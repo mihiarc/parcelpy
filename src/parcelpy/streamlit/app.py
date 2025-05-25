@@ -206,16 +206,337 @@ def render_map_viewer_tab():
     """Render the map viewer tab content."""
     st.header("🗺️ Map Viewer")
     
-    # Check if data is loaded
-    if not SessionStateManager.has_loaded_data():
-        st.warning("No data loaded. Please connect to a database and load data using the sidebar.")
+    # Check if database is connected
+    if not SessionStateManager.has_database_connection():
+        st.warning("No database connected. Please connect to a database using the sidebar to enable spatial queries.")
         return
     
-    data = SessionStateManager.get_loaded_data()
-    
-    # Use the comprehensive map interface
-    from components.map_components import render_complete_map_interface
-    render_complete_map_interface(data)
+    try:
+        import folium
+        from streamlit_folium import st_folium
+        from folium.plugins import Draw
+        import math
+        
+        # Configuration
+        MAX_BBOX_AREA_KM2 = 100  # Maximum bounding box area in square kilometers
+        MAX_PARCEL_LIMIT = 1000  # Maximum number of parcels to load
+        
+        # Create a map centered on North Carolina
+        center_lat = 35.7796
+        center_lon = -78.6382
+        
+        # Create base map with OpenStreetMap tiles
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=8,
+            tiles='OpenStreetMap'
+        )
+        
+        # Add drawing tools for bounding box selection
+        draw = Draw(
+            export=True,
+            draw_options={
+                'polyline': False,
+                'polygon': False,
+                'circle': False,
+                'marker': False,
+                'circlemarker': False,
+                'rectangle': {
+                    'shapeOptions': {
+                        'color': '#ff0000',
+                        'fillColor': '#ff0000',
+                        'fillOpacity': 0.2
+                    }
+                }
+            },
+            edit_options={'edit': False}
+        )
+        draw.add_to(m)
+        
+        # Add a reference marker
+        folium.Marker(
+            [center_lat, center_lon],
+            popup="North Carolina Center",
+            tooltip="Reference Point"
+        ).add_to(m)
+        
+        # Display the map
+        st.subheader("Interactive Spatial Query Map")
+        st.info("🎯 Draw a rectangle on the map to query parcels within that area")
+        
+        # Instructions
+        with st.expander("📋 Instructions", expanded=False):
+            st.markdown("""
+            **How to use the spatial query tool:**
+            
+            1. **Draw a Rectangle**: Use the rectangle tool (⬜) in the map toolbar to draw a bounding box
+            2. **Size Limits**: Maximum area is 100 km² to prevent performance issues
+            3. **Query Parcels**: Click "Query Parcels in Bounding Box" to load parcel data
+            4. **View Results**: Parcels will be displayed on the map and in the data table below
+            
+            **Tips:**
+            - Start with smaller areas for faster results
+            - Zoom in to your area of interest before drawing
+            - The query will return up to 1,000 parcels maximum
+            """)
+        
+        # Map display with interaction tracking
+        map_data = st_folium(
+            m, 
+            width=700, 
+            height=500,
+            returned_objects=["last_object_clicked", "all_drawings", "bounds"]
+        )
+        
+        # Process drawn rectangles
+        drawn_features = map_data.get('all_drawings', [])
+        
+        if drawn_features:
+            st.subheader("🎯 Bounding Box Query")
+            
+            # Get the most recent rectangle
+            rectangles = [f for f in drawn_features if f['geometry']['type'] == 'Polygon']
+            
+            if rectangles:
+                latest_rect = rectangles[-1]  # Get the most recent rectangle
+                coords = latest_rect['geometry']['coordinates'][0]
+                
+                # Extract bounding box coordinates
+                lons = [coord[0] for coord in coords]
+                lats = [coord[1] for coord in coords]
+                
+                minx, maxx = min(lons), max(lons)
+                miny, maxy = min(lats), max(lats)
+                
+                # Calculate area in km²
+                def calculate_bbox_area_km2(minx, miny, maxx, maxy):
+                    """Calculate bounding box area in square kilometers."""
+                    # Convert to approximate distance in km
+                    lat_diff = maxy - miny
+                    lon_diff = maxx - minx
+                    
+                    # Approximate conversion (varies by latitude)
+                    avg_lat = (miny + maxy) / 2
+                    lat_km = lat_diff * 111.32  # 1 degree lat ≈ 111.32 km
+                    lon_km = lon_diff * 111.32 * math.cos(math.radians(avg_lat))
+                    
+                    return lat_km * lon_km
+                
+                bbox_area = calculate_bbox_area_km2(minx, miny, maxx, maxy)
+                
+                # Display bounding box info
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Bounding Box Area", f"{bbox_area:.2f} km²")
+                
+                with col2:
+                    st.metric("Max Allowed Area", f"{MAX_BBOX_AREA_KM2} km²")
+                
+                with col3:
+                    area_ok = bbox_area <= MAX_BBOX_AREA_KM2
+                    st.metric("Area Check", "✅ OK" if area_ok else "❌ Too Large")
+                
+                # Show coordinates
+                with st.expander("📍 Bounding Box Coordinates", expanded=False):
+                    st.write(f"**Southwest:** {miny:.6f}, {minx:.6f}")
+                    st.write(f"**Northeast:** {maxy:.6f}, {maxx:.6f}")
+                    st.write(f"**Bounds:** ({minx:.6f}, {miny:.6f}, {maxx:.6f}, {maxy:.6f})")
+                
+                # Query button and results
+                if area_ok:
+                    if st.button("🔍 Query Parcels in Bounding Box", type="primary"):
+                        with st.spinner("Querying parcels..."):
+                            try:
+                                # Get database loader from session
+                                db_loader = SessionStateManager.get_database_loader()
+                                current_table = SessionStateManager.get_current_table()
+                                
+                                if not db_loader or not current_table:
+                                    st.error("Database connection or table not available")
+                                    return
+                                
+                                # Query parcels within bounding box
+                                bbox = (minx, miny, maxx, maxy)
+                                parcels = db_loader.load_parcel_data(
+                                    table_name=current_table,
+                                    bbox=bbox,
+                                    sample_size=MAX_PARCEL_LIMIT
+                                )
+                                
+                                if not parcels.empty:
+                                    # Store results in session state
+                                    SessionStateManager.set_bbox_query_results(parcels, bbox)
+                                    
+                                    st.success(f"✅ Found {len(parcels):,} parcels in the selected area")
+                                    
+                                    # Display results summary
+                                    col1, col2, col3 = st.columns(3)
+                                    
+                                    with col1:
+                                        st.metric("Parcels Found", f"{len(parcels):,}")
+                                    
+                                    with col2:
+                                        if 'gisacres' in parcels.columns:
+                                            total_acres = parcels['gisacres'].sum()
+                                            st.metric("Total Area", f"{total_acres:,.1f} acres")
+                                    
+                                    with col3:
+                                        if hasattr(parcels, 'geometry') and parcels.geometry is not None:
+                                            st.metric("Geometry Data", "✅ Available")
+                                        else:
+                                            st.metric("Geometry Data", "❌ Not Available")
+                                    
+                                    # Create a new map with the parcels
+                                    st.subheader("📍 Query Results Map")
+                                    
+                                    # Create map for results
+                                    result_map = folium.Map(
+                                        location=[(miny + maxy) / 2, (minx + maxx) / 2],
+                                        zoom_start=12,
+                                        tiles='OpenStreetMap'
+                                    )
+                                    
+                                    # Add bounding box outline
+                                    folium.Rectangle(
+                                        bounds=[[miny, minx], [maxy, maxx]],
+                                        color='red',
+                                        fill=False,
+                                        weight=2,
+                                        popup="Query Bounding Box"
+                                    ).add_to(result_map)
+                                    
+                                    # Add parcels if geometry is available
+                                    if hasattr(parcels, 'geometry') and parcels.geometry is not None:
+                                        try:
+                                            # Convert to WGS84 for display
+                                            if parcels.crs != 'EPSG:4326':
+                                                parcels_display = parcels.to_crs('EPSG:4326')
+                                            else:
+                                                parcels_display = parcels
+                                            
+                                            # Add parcels to map (sample if too many)
+                                            display_sample = min(100, len(parcels_display))
+                                            sample_parcels = parcels_display.sample(n=display_sample) if len(parcels_display) > display_sample else parcels_display
+                                            
+                                            for idx, parcel in sample_parcels.iterrows():
+                                                if parcel.geometry is not None:
+                                                    # Create popup with parcel info
+                                                    popup_info = []
+                                                    if 'parno' in parcel:
+                                                        popup_info.append(f"Parcel: {parcel['parno']}")
+                                                    if 'gisacres' in parcel:
+                                                        popup_info.append(f"Area: {parcel['gisacres']:.2f} acres")
+                                                    if 'parval' in parcel:
+                                                        popup_info.append(f"Value: ${parcel['parval']:,.0f}")
+                                                    
+                                                    popup_text = "<br>".join(popup_info) if popup_info else "Parcel Data"
+                                                    
+                                                    folium.GeoJson(
+                                                        parcel.geometry,
+                                                        style_function=lambda x: {
+                                                            'fillColor': 'blue',
+                                                            'color': 'blue',
+                                                            'weight': 1,
+                                                            'fillOpacity': 0.3
+                                                        },
+                                                        popup=popup_text,
+                                                        tooltip=f"Parcel {parcel.get('parno', 'Unknown')}"
+                                                    ).add_to(result_map)
+                                            
+                                            if display_sample < len(parcels_display):
+                                                st.info(f"Showing {display_sample} of {len(parcels_display)} parcels on map for performance")
+                                        
+                                        except Exception as e:
+                                            st.warning(f"Could not display parcel geometries: {e}")
+                                    
+                                    # Display results map
+                                    st_folium(result_map, width=700, height=400)
+                                    
+                                    # Data table
+                                    st.subheader("📊 Parcel Data")
+                                    
+                                    # Prepare data for display (remove geometry column for table)
+                                    display_data = parcels.copy()
+                                    if 'geometry' in display_data.columns:
+                                        display_data = display_data.drop(columns=['geometry'])
+                                    
+                                    # Show data with pagination
+                                    st.dataframe(
+                                        display_data.head(50), 
+                                        use_container_width=True,
+                                        height=300
+                                    )
+                                    
+                                    if len(display_data) > 50:
+                                        st.info(f"Showing first 50 of {len(display_data)} records")
+                                    
+                                    # Download options
+                                    st.subheader("💾 Download Results")
+                                    
+                                    col1, col2, col3 = st.columns(3)
+                                    
+                                    with col1:
+                                        if st.button("Download CSV"):
+                                            csv_link = create_download_link(display_data, "bbox_parcels", "csv")
+                                            st.markdown(csv_link, unsafe_allow_html=True)
+                                    
+                                    with col2:
+                                        if st.button("Download Parquet"):
+                                            parquet_link = create_download_link(display_data, "bbox_parcels", "parquet")
+                                            st.markdown(parquet_link, unsafe_allow_html=True)
+                                    
+                                    with col3:
+                                        if hasattr(parcels, 'geometry') and parcels.geometry is not None:
+                                            if st.button("Download GeoJSON"):
+                                                geojson_link = create_download_link(parcels, "bbox_parcels", "geojson")
+                                                st.markdown(geojson_link, unsafe_allow_html=True)
+                                
+                                else:
+                                    st.warning("No parcels found in the selected bounding box")
+                            
+                            except Exception as e:
+                                st.error(f"Error querying parcels: {e}")
+                                st.error("Please check your database connection and try again")
+                
+                else:
+                    st.error(f"❌ Bounding box too large! Maximum allowed area is {MAX_BBOX_AREA_KM2} km²")
+                    st.info("Please draw a smaller rectangle and try again")
+            
+            else:
+                st.info("Draw a rectangle on the map to define your query area")
+        
+        else:
+            st.info("Use the rectangle tool (⬜) in the map toolbar to draw a bounding box for spatial queries")
+        
+        # Show current map view bounds
+        if map_data.get('bounds'):
+            bounds = map_data['bounds']
+            with st.expander("🗺️ Current Map View", expanded=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write(f"Southwest: {bounds['_southWest']['lat']:.4f}, {bounds['_southWest']['lng']:.4f}")
+                with col2:
+                    st.write(f"Northeast: {bounds['_northEast']['lat']:.4f}, {bounds['_northEast']['lng']:.4f}")
+        
+        # Show previous query results if available
+        bbox_results = SessionStateManager.get_bbox_query_results()
+        if bbox_results:
+            parcels_data, query_bbox = bbox_results
+            st.subheader("📋 Previous Query Results")
+            st.info(f"Last query returned {len(parcels_data):,} parcels from bounding box: {query_bbox}")
+            
+            if st.button("Clear Previous Results"):
+                SessionStateManager.clear_bbox_query_results()
+                st.rerun()
+        
+    except ImportError as e:
+        st.error(f"Map libraries not available: {e}")
+        st.info("Install folium and streamlit-folium to enable mapping functionality")
+        st.code("pip install folium streamlit-folium")
+    except Exception as e:
+        st.error(f"Error creating map: {e}")
+        st.info("Map functionality is temporarily unavailable")
 
 
 def render_analytics_tab():

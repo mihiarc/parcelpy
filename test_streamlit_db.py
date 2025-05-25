@@ -45,7 +45,10 @@ def test_database_connection():
             )
             print(f"   Loaded {len(sample_data)} records")
             print(f"   Columns: {list(sample_data.columns)[:5]}...")  # First 5 columns
-            print(f"   CRS: {sample_data.crs}")
+            try:
+                print(f"   CRS: {sample_data.crs}")
+            except AttributeError:
+                print("   CRS: Not applicable (no geometry data)")
             
         else:
             print("❌ No tables found in database")

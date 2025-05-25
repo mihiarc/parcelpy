@@ -139,55 +139,103 @@ class DatabaseManager:
                 # Assume the first geometry column is the primary geometry
                 geom_col = geometry_columns[0]
                 
-                # Try to convert BLOB geometry to shapely geometries
-                try:
-                    # First try to convert using WKB (Well-Known Binary)
-                    from shapely import wkb
-                    df[geom_col] = df[geom_col].apply(
-                        lambda x: wkb.loads(bytes(x)) if x is not None else None
-                    )
-                except Exception as wkb_error:
-                    logger.warning(f"Could not convert geometry using WKB: {wkb_error}")
-                    # If WKB fails, try to get WKT format with a separate query
+                # Get table name from query for schema inspection
+                table_name = self._extract_table_name_from_query(query)
+                
+                # Check the column type to determine how to handle geometry
+                column_type = None
+                if table_name:
                     try:
-                        # Create a simple query to get WKT format for the geometries
-                        # We'll use the row IDs to match back to the original data
+                        table_info = self.get_table_info(table_name)
+                        geom_row = table_info[table_info['column_name'] == geom_col]
+                        if not geom_row.empty:
+                            column_type = geom_row.iloc[0]['column_type'].upper()
+                            logger.debug(f"Geometry column '{geom_col}' type: {column_type}")
+                    except Exception as e:
+                        logger.debug(f"Could not determine column type: {e}")
+                
+                # Try different geometry conversion approaches
+                geometry_converted = False
+                
+                # Approach 1: If column is already GEOMETRY type, try direct WKT conversion
+                if column_type and 'GEOMETRY' in column_type:
+                    try:
+                        # Get WKT directly using ST_AsText
                         if 'parno' in df.columns:
                             id_col = 'parno'
                         elif 'id' in df.columns:
                             id_col = 'id'
                         else:
-                            # Use row number as fallback
                             df = df.reset_index()
                             id_col = 'index'
                         
-                        # Get unique IDs from the result
                         ids = df[id_col].tolist()
-                        id_list = "', '".join([str(id) for id in ids])
-                        
-                        wkt_query = f"SELECT {id_col}, ST_AsText(ST_GeomFromWKB({geom_col})) as geometry_wkt FROM {query.split('FROM')[1].split('WHERE')[0].split('USING')[0].strip()} WHERE {id_col} IN ('{id_list}')"
-                        
-                        wkt_df = self.execute_query(wkt_query)
-                        
-                        # Merge WKT data back to original dataframe
-                        df = df.merge(wkt_df, on=id_col, how='left')
-                        
-                        # Convert WKT to shapely geometries
-                        from shapely import wkt
-                        df[geom_col] = df['geometry_wkt'].apply(
-                            lambda x: wkt.loads(x) if x is not None and x != '' else None
-                        )
-                        df = df.drop(columns=['geometry_wkt'])
-                        
-                    except Exception as wkt_error:
-                        logger.warning(f"Could not convert geometry using WKT: {wkt_error}")
-                        logger.warning("Attempting direct BLOB conversion")
-                        # Final fallback: try direct conversion
+                        if ids:
+                            id_list = "', '".join([str(id) for id in ids])
+                            wkt_query = f"SELECT {id_col}, ST_AsText({geom_col}) as geometry_wkt FROM {table_name} WHERE {id_col} IN ('{id_list}')"
+                            
+                            wkt_df = self.execute_query(wkt_query)
+                            df = df.merge(wkt_df, on=id_col, how='left')
+                            
+                            from shapely import wkt
+                            df[geom_col] = df['geometry_wkt'].apply(
+                                lambda x: wkt.loads(x) if x is not None and x != '' else None
+                            )
+                            df = df.drop(columns=['geometry_wkt'])
+                            geometry_converted = True
+                            logger.debug("Successfully converted geometry using ST_AsText")
+                    except Exception as e:
+                        logger.debug(f"ST_AsText conversion failed: {e}")
+                
+                # Approach 2: Try WKB conversion for BLOB data
+                if not geometry_converted:
+                    try:
+                        from shapely import wkb
                         df[geom_col] = df[geom_col].apply(
                             lambda x: wkb.loads(bytes(x)) if x is not None else None
                         )
+                        geometry_converted = True
+                        logger.debug("Successfully converted geometry using WKB")
+                    except Exception as e:
+                        logger.debug(f"WKB conversion failed: {e}")
                 
-                # Create GeoDataFrame
+                # Approach 3: Try WKB with ST_GeomFromWKB for BLOB columns
+                if not geometry_converted and table_name:
+                    try:
+                        if 'parno' in df.columns:
+                            id_col = 'parno'
+                        elif 'id' in df.columns:
+                            id_col = 'id'
+                        else:
+                            df = df.reset_index()
+                            id_col = 'index'
+                        
+                        ids = df[id_col].tolist()
+                        if ids:
+                            id_list = "', '".join([str(id) for id in ids])
+                            wkt_query = f"SELECT {id_col}, ST_AsText(ST_GeomFromWKB({geom_col})) as geometry_wkt FROM {table_name} WHERE {id_col} IN ('{id_list}')"
+                            
+                            wkt_df = self.execute_query(wkt_query)
+                            df = df.merge(wkt_df, on=id_col, how='left')
+                            
+                            from shapely import wkt
+                            df[geom_col] = df['geometry_wkt'].apply(
+                                lambda x: wkt.loads(x) if x is not None and x != '' else None
+                            )
+                            df = df.drop(columns=['geometry_wkt'])
+                            geometry_converted = True
+                            logger.debug("Successfully converted geometry using ST_GeomFromWKB + ST_AsText")
+                    except Exception as e:
+                        logger.debug(f"ST_GeomFromWKB conversion failed: {e}")
+                
+                # If all geometry conversion attempts failed, create GeoDataFrame without geometry
+                if not geometry_converted:
+                    logger.warning(f"Could not convert geometry column '{geom_col}', creating GeoDataFrame without spatial data")
+                    # Remove the problematic geometry column and create a regular DataFrame
+                    df = df.drop(columns=[geom_col])
+                    return gpd.GeoDataFrame(df)
+                
+                # Create GeoDataFrame with converted geometry
                 gdf = gpd.GeoDataFrame(df, geometry=geom_col)
                 return gdf
             else:
@@ -197,6 +245,26 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Spatial query execution failed: {e}")
             raise
+    
+    def _extract_table_name_from_query(self, query: str) -> Optional[str]:
+        """
+        Extract table name from a SQL query.
+        
+        Args:
+            query: SQL query string
+            
+        Returns:
+            Table name or None if not found
+        """
+        try:
+            # Simple regex to extract table name from FROM clause
+            import re
+            match = re.search(r'FROM\s+(\w+)', query, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+        return None
     
     def create_table_from_parquet(self, table_name: str, parquet_path: Union[str, Path], 
                                  if_exists: str = "replace") -> None:

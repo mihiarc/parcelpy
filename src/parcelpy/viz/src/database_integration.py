@@ -178,43 +178,69 @@ class DatabaseDataLoader:
             # Execute the query
             parcels = self.db_manager.execute_spatial_query(query)
             
-            # Set appropriate CRS based on coordinate values
-            if not parcels.empty and not parcels.geometry.isna().all():
-                # Check coordinate ranges to determine likely CRS
-                bounds = parcels.total_bounds
-                
-                # If coordinates are in the range typical for NC State Plane (feet)
-                # X: ~1.9M-2.3M, Y: ~600K-900K
-                if (1800000 < bounds[0] < 2400000 and 
-                    1800000 < bounds[2] < 2400000 and 
-                    500000 < bounds[1] < 1000000 and 
-                    500000 < bounds[3] < 1000000):
-                    # North Carolina State Plane (feet) - EPSG:2264
-                    parcels = parcels.set_crs('EPSG:2264')
-                    logger.info("Set CRS to NC State Plane (EPSG:2264) based on coordinate ranges")
-                else:
-                    # Default to WGS84 if ranges don't match known projections
-                    parcels = parcels.set_crs('EPSG:4326')
-                    logger.warning("No CRS found in database, setting to WGS84")
-            else:
-                # Default to WGS84 for empty or null geometry
-                parcels = parcels.set_crs('EPSG:4326')
-                logger.warning("No CRS found in database, setting to WGS84")
+            # Set appropriate CRS based on coordinate values (only if geometry exists)
+            has_geometry = hasattr(parcels, 'geometry') and parcels.geometry is not None
             
-            # Calculate area in acres if not already present
-            if 'acres' not in parcels.columns and 'Acres' not in parcels.columns:
-                # Convert to a CRS suitable for area calculation
-                area_calc_crs = "EPSG:5070"  # NAD83 / Conus Albers
-                parcels_area = parcels.to_crs(area_calc_crs)
-                # Convert from square meters to acres (1 sq meter = 0.000247105 acres)
-                parcels['Acres'] = parcels_area.geometry.area * 0.000247105
+            if has_geometry and not parcels.empty:
+                try:
+                    # Check if geometry column has valid data
+                    if not parcels.geometry.isna().all():
+                        # Check coordinate ranges to determine likely CRS
+                        bounds = parcels.total_bounds
+                        
+                        # If coordinates are in the range typical for NC State Plane (feet)
+                        # X: ~1.9M-2.3M, Y: ~600K-900K
+                        if (1800000 < bounds[0] < 2400000 and 
+                            1800000 < bounds[2] < 2400000 and 
+                            500000 < bounds[1] < 1000000 and 
+                            500000 < bounds[3] < 1000000):
+                            # North Carolina State Plane (feet) - EPSG:2264
+                            parcels = parcels.set_crs('EPSG:2264')
+                            logger.info("Set CRS to NC State Plane (EPSG:2264) based on coordinate ranges")
+                        else:
+                            # Default to WGS84 if ranges don't match known projections
+                            parcels = parcels.set_crs('EPSG:4326')
+                            logger.warning("No CRS found in database, setting to WGS84")
+                    else:
+                        # Default to WGS84 for null geometry
+                        parcels = parcels.set_crs('EPSG:4326')
+                        logger.warning("No valid geometry found, setting to WGS84")
+                except Exception as e:
+                    logger.warning(f"Could not set CRS: {e}")
+                    # Try to set a default CRS
+                    try:
+                        parcels = parcels.set_crs('EPSG:4326')
+                    except:
+                        pass
+            else:
+                logger.info("No geometry data found in table")
+            
+            # Calculate area in acres if not already present and geometry exists
+            if (has_geometry and 
+                'acres' not in parcels.columns and 
+                'Acres' not in parcels.columns and 
+                not parcels.empty):
+                try:
+                    # Convert to a CRS suitable for area calculation
+                    area_calc_crs = "EPSG:5070"  # NAD83 / Conus Albers
+                    parcels_area = parcels.to_crs(area_calc_crs)
+                    # Convert from square meters to acres (1 sq meter = 0.000247105 acres)
+                    parcels['Acres'] = parcels_area.geometry.area * 0.000247105
+                except Exception as e:
+                    logger.warning(f"Could not calculate area: {e}")
             
             # Set up index if PARENTPIN exists
             if 'PARENTPIN' in parcels.columns and parcels.index.name != 'PARENTPIN':
                 parcels = parcels.set_index('PARENTPIN')
             
-            logger.info(f"Loaded {len(parcels)} parcels from database")
-            logger.info(f"CRS: {parcels.crs}")
+            logger.info(f"Loaded {len(parcels)} records from database")
+            if has_geometry:
+                try:
+                    logger.info(f"CRS: {parcels.crs}")
+                except:
+                    logger.info("CRS: Not set (no geometry data)")
+            else:
+                logger.info("CRS: Not applicable (no geometry data)")
             
             return parcels
             

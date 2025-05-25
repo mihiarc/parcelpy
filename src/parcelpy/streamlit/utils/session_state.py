@@ -17,6 +17,7 @@ class SessionStateManager:
     DEFAULT_KEYS = {
         'database_connected': False,
         'current_database_path': None,
+        'database_loader': None,
         'available_tables': [],
         'current_table': None,
         'loaded_data': None,
@@ -29,6 +30,8 @@ class SessionStateManager:
         'selected_attributes': [],
         'sample_size': 1000,
         'last_query': None,
+        'bbox_query_results': None,
+        'bbox_query_bbox': None,
         'error_messages': [],
         'success_messages': []
     }

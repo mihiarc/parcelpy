@@ -27,6 +27,9 @@ def temp_db():
     with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=True) as tmp:
         db_path = tmp.name
     
+    # Remove the file so DuckDB can create a fresh database
+    Path(db_path).unlink(missing_ok=True)
+    
     yield db_path
     
     # Cleanup

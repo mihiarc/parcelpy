@@ -317,20 +317,19 @@ class ParcelDB:
         """
         try:
             where_clauses = []
-            parameters = {}
+            parameters = []
             
             for column, value in search_criteria.items():
                 if isinstance(value, str):
                     where_clauses.append(f"{column} ILIKE ?")
-                    parameters[column] = f"%{value}%"
+                    parameters.append(f"%{value}%")
                 elif isinstance(value, (int, float)):
                     where_clauses.append(f"{column} = ?")
-                    parameters[column] = value
+                    parameters.append(value)
                 elif isinstance(value, (list, tuple)):
                     placeholders = ",".join(["?" for _ in value])
                     where_clauses.append(f"{column} IN ({placeholders})")
-                    for i, v in enumerate(value):
-                        parameters[f"{column}_{i}"] = v
+                    parameters.extend(value)
             
             where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
             

@@ -32,15 +32,19 @@ class TestCensusIntegrationBasic:
     """Basic tests that don't require SocialMapper."""
     
     def test_import_without_socialmapper(self):
-        """Test that import fails gracefully without SocialMapper."""
+        """Test that import works gracefully without SocialMapper."""
         with patch.dict('sys.modules', {'socialmapper.census': None}):
-            with pytest.raises(ImportError):
-                from parcelpy.database.core.census_integration import CensusIntegration
+            # Should not raise ImportError, but should work in mock mode
+            from parcelpy.database.core.census_integration import CensusIntegration
+            assert CensusIntegration is not None
     
     def test_database_manager_initialization(self):
         """Test that DatabaseManager can be initialized."""
-        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=True) as tmp:
             db_path = tmp.name
+        
+        # Remove the file so DuckDB can create a fresh database
+        Path(db_path).unlink(missing_ok=True)
         
         try:
             db_manager = DatabaseManager(db_path=db_path)
@@ -57,8 +61,11 @@ class TestCensusIntegrationWithSocialMapper:
     @pytest.fixture
     def db_manager(self):
         """Create a test database manager."""
-        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=True) as tmp:
             db_path = tmp.name
+        
+        # Remove the file so DuckDB can create a fresh database
+        Path(db_path).unlink(missing_ok=True)
         
         db_manager = DatabaseManager(db_path=db_path)
         
@@ -209,8 +216,11 @@ class TestCensusIntegrationIntegration:
     @pytest.fixture
     def db_manager_with_real_data(self):
         """Create database with real parcel data for integration testing."""
-        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=True) as tmp:
             db_path = tmp.name
+        
+        # Remove the file so DuckDB can create a fresh database
+        Path(db_path).unlink(missing_ok=True)
         
         db_manager = DatabaseManager(db_path=db_path)
         

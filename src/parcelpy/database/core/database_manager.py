@@ -52,7 +52,9 @@ class DatabaseManager:
             if self.db_path:
                 conn = duckdb.connect(str(self.db_path))
             else:
+                # For in-memory databases, keep the connection persistent
                 conn = duckdb.connect(":memory:")
+                self._connection = conn
             
             try:
                 # Install and load spatial extension (only once during initialization)
@@ -90,7 +92,9 @@ class DatabaseManager:
                 self._extensions_loaded = True
                 
             finally:
-                conn.close()
+                # Only close connection for file-based databases
+                if self.db_path:
+                    conn.close()
                 
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -104,32 +108,32 @@ class DatabaseManager:
         Yields:
             duckdb.DuckDBPyConnection: Database connection
         """
-        conn = None
-        try:
-            if self.db_path:
+        if self.db_path:
+            # File-based database: create new connection each time
+            conn = None
+            try:
                 conn = duckdb.connect(str(self.db_path))
-            else:
-                conn = duckdb.connect(":memory:")
-            
-            # Try to load extensions for this connection, but handle conflicts gracefully
-            try:
-                conn.execute("LOAD spatial;")
-            except Exception as e:
-                # Check if it's the specific "already exists" error
-                if "already exists" in str(e):
-                    logger.debug(f"Spatial extension already loaded: {e}")
-                else:
+                
+                # Try to load extensions for this connection
+                try:
+                    conn.execute("LOAD spatial;")
+                except Exception as e:
                     logger.debug(f"Could not load spatial extension: {e}")
-            
-            try:
-                conn.execute("LOAD parquet;")
-            except Exception as e:
-                logger.debug(f"Could not load parquet extension: {e}")
-            
-            yield conn
-        finally:
-            if conn:
-                conn.close()
+                
+                try:
+                    conn.execute("LOAD parquet;")
+                except Exception as e:
+                    logger.debug(f"Could not load parquet extension: {e}")
+                
+                yield conn
+            finally:
+                if conn:
+                    conn.close()
+        else:
+            # In-memory database: use persistent connection
+            if self._connection is None:
+                raise RuntimeError("In-memory database connection not initialized")
+            yield self._connection
     
     def execute_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """

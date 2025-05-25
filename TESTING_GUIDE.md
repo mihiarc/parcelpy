@@ -31,7 +31,7 @@ The following databases are available for testing:
 - `databases/test/test_small_county_harnett.duckdb` (22MB) - Medium dataset
 - `databases/test/test_large_county_wake.duckdb` (179MB) - Large dataset
 
-**Note**: A symbolic link `test_parcels.duckdb` points to `dev_tiny_sample.duckdb` for convenience.
+**Note**: All paths are direct references to avoid confusion from symbolic links.
 
 ## 📋 Component Testing Checklist
 
@@ -55,12 +55,12 @@ The following databases are available for testing:
 
 **What to Test:**
 - [ ] Database path input field is visible
-- [ ] Default path shows `../../../test_parcels.duckdb`
+- [ ] Default path shows `../../../databases/test/dev_tiny_sample.duckdb`
 - [ ] Connect button is present and clickable
 
 **Test Steps:**
 1. **Test with default database:**
-   - Default path: `../../../test_parcels.duckdb` (should work automatically)
+   - Default path: `../../../databases/test/dev_tiny_sample.duckdb` (should work automatically)
    - Click "Connect"
    - Expected: ✅ Success message, 4 available tables listed
 

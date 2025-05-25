@@ -14,7 +14,7 @@ from parcelpy.viz.src.database_integration import DatabaseDataLoader
 def test_summary_component():
     """Test the database summary component with different table types."""
     
-    db_path = "test_parcels.duckdb"
+    db_path = "databases/test/dev_tiny_sample.duckdb"
     print(f"Testing database summary component with: {db_path}")
     
     try:

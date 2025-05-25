@@ -14,8 +14,8 @@ from parcelpy.viz.src.database_integration import DatabaseDataLoader
 def test_database_connection():
     """Test database connection and table listing."""
     
-    # Test with the correct relative path from streamlit directory
-    db_path = "test_parcels.duckdb"
+    # Test with the direct path to the test database
+    db_path = "databases/test/dev_tiny_sample.duckdb"
     
     print(f"Testing database connection to: {db_path}")
     print(f"Database file exists: {Path(db_path).exists()}")

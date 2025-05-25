@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
         "initial_sidebar_state": "expanded"
     },
     "database": {
-        "default_path": "../../../test_parcels.duckdb",
+        "default_path": "../../../databases/test/dev_tiny_sample.duckdb",
         "memory_limit": "4GB",
         "threads": 4
     },

@@ -1,126 +1,96 @@
 """
-Centralized Coordinate Reference System (CRS) management for ParcelPy Database Module.
+CRS (Coordinate Reference System) Manager for ParcelPy PostgreSQL integration.
 
-This module provides standardized CRS handling following US geospatial best practices:
-- WGS84 (EPSG:4326) for geographic coordinates
-- US Albers Equal Area (EPSG:5070) for projected operations
-- Automatic detection and transformation of source data
+Handles CRS detection, transformation, and management for spatial data in PostgreSQL with PostGIS.
 """
 
 import logging
-from typing import Optional, Tuple, Dict, Any
-import warnings
+from typing import Optional, Dict, Any, Tuple, List
+import pandas as pd
+import geopandas as gpd
+from sqlalchemy.engine import Connection
+from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
-
-# Try to import required libraries
-try:
-    import geopandas as gpd
-    import duckdb
-    from shapely.geometry import Point
-    GEOSPATIAL_AVAILABLE = True
-except ImportError as e:
-    GEOSPATIAL_AVAILABLE = False
-    logger.warning(f"Geospatial libraries not available: {e}")
 
 
 class DatabaseCRSManager:
     """
-    Centralized CRS manager for ParcelPy database operations.
+    Manages CRS operations for spatial data in PostgreSQL with PostGIS.
     
-    Follows US geospatial standards:
-    - WGS84 (EPSG:4326) for geographic coordinates and storage
-    - US Albers Equal Area (EPSG:5070) for area calculations and analysis
-    - Automatic detection and transformation of source coordinate systems
+    Provides CRS detection, transformation, and coordinate system management.
     """
     
-    # Standard CRS definitions
-    WGS84 = "EPSG:4326"  # Geographic coordinates (lat/lon)
-    US_ALBERS = "EPSG:5070"  # US Contiguous Albers Equal Area (projected)
+    # Common CRS definitions
+    WGS84 = "EPSG:4326"
+    WEB_MERCATOR = "EPSG:3857"
     
-    # Common source CRS for different regions
-    COMMON_SOURCE_CRS = {
-        'north_carolina': [
-            'EPSG:3359',  # NAD83 / North Carolina (ftUS)
-            'EPSG:3358',  # NAD83 / North Carolina (meters)
-            'EPSG:2264',  # NAD83 / North Carolina (ftUS) - alternative
-        ],
-        'utm_17n': ['EPSG:26917', 'EPSG:32617'],  # NAD83/WGS84 UTM Zone 17N
-        'utm_18n': ['EPSG:26918', 'EPSG:32618'],  # NAD83/WGS84 UTM Zone 18N
-    }
+    # North Carolina specific CRS options
+    NC_STATE_PLANE_FEET = "EPSG:3359"  # NAD83 / North Carolina (ftUS)
+    NC_STATE_PLANE_METERS = "EPSG:2264"  # NAD83 / North Carolina
     
     def __init__(self):
         """Initialize the CRS manager."""
-        if not GEOSPATIAL_AVAILABLE:
-            raise ImportError("Geospatial libraries (geopandas, duckdb) are required for CRS operations")
-        
-        self.logger = logging.getLogger(__name__)
+        self.detected_crs_cache = {}
+        logger.debug("DatabaseCRSManager initialized")
     
-    def detect_source_crs(self, db_connection: duckdb.DuckDBPyConnection, 
+    def detect_source_crs(self, db_connection: Connection, 
                          table_name: str, 
                          geometry_column: str = "geometry",
-                         sample_size: int = 5) -> Optional[str]:
+                         sample_size: int = 5,
+                         schema: str = "public") -> Optional[str]:
         """
         Detect the source CRS of parcel data by testing coordinate transformations.
         
         Args:
-            db_connection: DuckDB connection
+            db_connection: PostgreSQL connection
             table_name: Name of the table containing geometries
             geometry_column: Name of the geometry column
             sample_size: Number of sample points to test
+            schema: Database schema name
             
         Returns:
             Detected CRS string (e.g., 'EPSG:3359') or None if not detected
         """
         try:
-            # First, check the column type to determine how to handle geometry
-            column_info = db_connection.execute(f"""
-                SELECT column_type 
-                FROM (DESCRIBE {table_name}) 
-                WHERE column_name = '{geometry_column}'
-            """).fetchone()
+            # Check if we've already detected CRS for this table
+            cache_key = f"{schema}.{table_name}.{geometry_column}"
+            if cache_key in self.detected_crs_cache:
+                return self.detected_crs_cache[cache_key]
             
-            if not column_info:
-                logger.warning(f"Geometry column '{geometry_column}' not found in table '{table_name}'")
-                return None
+            # First, check if the geometry column has an SRID set
+            srid_query = text("""
+                SELECT Find_SRID(:schema, :table_name, :geometry_column) as srid;
+            """)
             
-            column_type = column_info[0].upper()
-            logger.info(f"Geometry column type: {column_type}")
+            srid_result = db_connection.execute(srid_query, {
+                'schema': schema,
+                'table_name': table_name,
+                'geometry_column': geometry_column
+            }).fetchone()
             
-            # Determine the appropriate geometry expression
-            if 'GEOMETRY' in column_type:
-                # Column is already GEOMETRY type
-                geom_expr = geometry_column
-            elif 'BLOB' in column_type:
-                # Column is BLOB, needs conversion
-                geom_expr = f"ST_GeomFromWKB({geometry_column})"
-            else:
-                logger.warning(f"Unknown geometry column type: {column_type}")
-                # Try both approaches
-                geom_expr = geometry_column
+            if srid_result and srid_result[0] > 0:
+                detected_crs = f"EPSG:{srid_result[0]}"
+                logger.info(f"Found SRID {srid_result[0]} for {table_name}.{geometry_column}")
+                self.detected_crs_cache[cache_key] = detected_crs
+                return detected_crs
             
             # Get coordinate bounds to analyze
-            bounds_query = f"""
+            full_table_name = f"{schema}.{table_name}" if schema != 'public' else table_name
+            bounds_query = text(f"""
                 SELECT 
-                    MIN(ST_X(ST_Centroid({geom_expr}))) as min_x,
-                    MAX(ST_X(ST_Centroid({geom_expr}))) as max_x,
-                    MIN(ST_Y(ST_Centroid({geom_expr}))) as min_y,
-                    MAX(ST_Y(ST_Centroid({geom_expr}))) as max_y
-                FROM {table_name}
+                    MIN(ST_X(ST_Centroid({geometry_column}))) as min_x,
+                    MAX(ST_X(ST_Centroid({geometry_column}))) as max_x,
+                    MIN(ST_Y(ST_Centroid({geometry_column}))) as min_y,
+                    MAX(ST_Y(ST_Centroid({geometry_column}))) as max_y
+                FROM {full_table_name}
                 WHERE {geometry_column} IS NOT NULL
-                LIMIT {sample_size * 100}
-            """
+                LIMIT :sample_limit
+            """)
             
-            try:
-                bounds_result = db_connection.execute(bounds_query).fetchone()
-            except Exception as e:
-                if 'GEOMETRY' not in column_type:
-                    # Try with ST_GeomFromWKB if direct access failed
-                    geom_expr = f"ST_GeomFromWKB({geometry_column})"
-                    bounds_query = bounds_query.replace(geometry_column, geom_expr)
-                    bounds_result = db_connection.execute(bounds_query).fetchone()
-                else:
-                    raise e
+            bounds_result = db_connection.execute(bounds_query, {
+                'sample_limit': sample_size * 100
+            }).fetchone()
             
             if not bounds_result:
                 logger.warning("No valid geometries found for CRS detection")
@@ -130,100 +100,97 @@ class DatabaseCRSManager:
             logger.info(f"Coordinate bounds: X({min_x:.2f}, {max_x:.2f}), Y({min_y:.2f}, {max_y:.2f})")
             
             # Check for North Carolina State Plane coordinates
-            # Expand range to cover the actual coordinate bounds we're seeing
             if ((1900000 <= min_x <= 2200000 and 500000 <= min_y <= 700000) or  # Current data range
                 (1000000 <= min_x <= 1200000 and 700000 <= min_y <= 1000000)):   # Original range
                 logger.info("Coordinates suggest North Carolina State Plane (feet)")
                 # Test EPSG:3359 transformation
-                if self._test_crs_transformation(db_connection, table_name, geom_expr, 'EPSG:3359', sample_size):
+                if self._test_crs_transformation(db_connection, full_table_name, geometry_column, 'EPSG:3359', sample_size):
+                    self.detected_crs_cache[cache_key] = 'EPSG:3359'
                     return 'EPSG:3359'
             
-            # Check for other common NC projections with expanded ranges
-            nc_crs_options = ['EPSG:3359', 'EPSG:2264', 'EPSG:3358']
-            for test_crs in nc_crs_options:
-                if self._test_crs_transformation(db_connection, table_name, geom_expr, test_crs, sample_size):
-                    logger.info(f"✅ Detected CRS: {test_crs}")
-                    return test_crs
-            
-            # Check if coordinates are already geographic (WGS84)
-            if -180 <= min_x <= 180 and -90 <= min_y <= 90:
-                logger.info("Coordinates appear to be geographic (WGS84)")
+            # Check for geographic coordinates (WGS84)
+            elif (-180 <= min_x <= 180 and -90 <= min_y <= 90):
+                logger.info("Coordinates suggest geographic (WGS84)")
+                self.detected_crs_cache[cache_key] = self.WGS84
                 return self.WGS84
             
-            # Test common North Carolina projections
-            nc_crs_candidates = [
-                'EPSG:3359',  # NAD83 / North Carolina (ftUS)
-                'EPSG:2264',  # NAD83 / North Carolina (ftUS) - alternative
-                'EPSG:3358',  # NAD83 / North Carolina
-                'EPSG:26917', # NAD83 / UTM zone 17N
-                'EPSG:26918', # NAD83 / UTM zone 18N
-            ]
+            # Check for Web Mercator
+            elif (-20037508 <= min_x <= 20037508 and -20037508 <= min_y <= 20037508):
+                logger.info("Coordinates suggest Web Mercator")
+                self.detected_crs_cache[cache_key] = self.WEB_MERCATOR
+                return self.WEB_MERCATOR
             
-            for test_crs in nc_crs_candidates:
-                if self._test_crs_transformation(db_connection, table_name, geom_expr, test_crs, sample_size):
-                    logger.info(f"✅ Detected CRS: {test_crs}")
-                    return test_crs
-            
-            logger.warning("Could not reliably detect CRS from coordinate analysis")
+            logger.warning(f"Could not determine CRS from coordinate bounds: X({min_x:.2f}, {max_x:.2f}), Y({min_y:.2f}, {max_y:.2f})")
             return None
             
         except Exception as e:
-            logger.error(f"Error detecting source CRS: {e}")
+            logger.error(f"CRS detection failed: {e}")
             return None
     
-    def _test_crs_transformation(self, db_connection: duckdb.DuckDBPyConnection,
-                                table_name: str, geom_expr: str, test_crs: str, 
-                                sample_size: int = 5) -> bool:
+    def _test_crs_transformation(self, db_connection: Connection,
+                               table_name: str, geometry_column: str,
+                               test_crs: str, sample_size: int = 5) -> bool:
         """
-        Test if a CRS transformation produces valid coordinates.
+        Test if a CRS transformation produces reasonable results.
         
         Args:
-            db_connection: DuckDB connection
-            table_name: Table name
-            geom_expr: Geometry expression (with or without ST_GeomFromWKB)
-            test_crs: CRS to test
-            sample_size: Number of sample points
+            db_connection: PostgreSQL connection
+            table_name: Full table name (with schema if needed)
+            geometry_column: Name of the geometry column
+            test_crs: CRS to test (e.g., 'EPSG:3359')
+            sample_size: Number of sample points to test
             
         Returns:
-            True if transformation produces valid coordinates
+            True if transformation seems valid
         """
         try:
-            test_query = f"""
+            # Test transformation to WGS84
+            test_query = text(f"""
                 SELECT 
-                    ST_X(ST_Transform(ST_Centroid({geom_expr}), '{test_crs}', '{self.WGS84}')) as lon,
-                    ST_Y(ST_Transform(ST_Centroid({geom_expr}), '{test_crs}', '{self.WGS84}')) as lat
+                    ST_X(ST_Transform(ST_SetSRID({geometry_column}, :srid), 4326)) as lon,
+                    ST_Y(ST_Transform(ST_SetSRID({geometry_column}, :srid), 4326)) as lat
                 FROM {table_name}
-                WHERE {geom_expr.split('(')[-1].rstrip(')')} IS NOT NULL
-                LIMIT {sample_size}
-            """
+                WHERE {geometry_column} IS NOT NULL
+                LIMIT :sample_size
+            """)
             
-            results = db_connection.execute(test_query).fetchall()
+            # Extract SRID number from EPSG string
+            srid = int(test_crs.split(':')[1])
             
-            if not results:
+            result = db_connection.execute(test_query, {
+                'srid': srid,
+                'sample_size': sample_size
+            }).fetchall()
+            
+            if not result:
                 return False
             
+            # Check if transformed coordinates are reasonable for WGS84
             valid_count = 0
-            for lon, lat in results:
-                if self.validate_coordinates(lon, lat, "north_carolina"):
-                    valid_count += 1
+            for row in result:
+                lon, lat = row
+                if lon is not None and lat is not None:
+                    # Check if coordinates are within reasonable bounds for North Carolina
+                    if -85 <= lon <= -75 and 33 <= lat <= 37:
+                        valid_count += 1
             
-            # Consider valid if at least 80% of samples are valid
-            success_rate = valid_count / len(results)
-            logger.debug(f"CRS {test_crs} validation: {valid_count}/{len(results)} valid ({success_rate:.1%})")
+            # Consider transformation valid if most points are reasonable
+            success_rate = valid_count / len(result)
+            logger.debug(f"CRS {test_crs} transformation success rate: {success_rate:.2f}")
             
             return success_rate >= 0.8
             
         except Exception as e:
-            logger.debug(f"Error testing CRS {test_crs}: {e}")
+            logger.debug(f"CRS transformation test failed for {test_crs}: {e}")
             return False
     
-    def transform_to_wgs84(self, db_connection: duckdb.DuckDBPyConnection,
+    def transform_to_wgs84(self, db_connection: Connection,
                           source_crs: str, geometry_expr: str) -> str:
         """
         Create a SQL expression to transform geometry to WGS84.
         
         Args:
-            db_connection: DuckDB connection
+            db_connection: PostgreSQL connection
             source_crs: Source CRS
             geometry_expr: SQL expression for the geometry
             
@@ -233,45 +200,32 @@ class DatabaseCRSManager:
         if source_crs == self.WGS84:
             return geometry_expr
         
-        return f"ST_Transform({geometry_expr}, '{source_crs}', '{self.WGS84}')"
+        # Extract SRID from EPSG string
+        srid = int(source_crs.split(':')[1])
+        return f"ST_Transform(ST_SetSRID({geometry_expr}, {srid}), 4326)"
     
-    def get_centroid_wgs84(self, db_connection: duckdb.DuckDBPyConnection,
-                          source_crs: str, geometry_column: str, table_name: str = None) -> Tuple[str, str]:
+    def get_centroid_wgs84(self, db_connection: Connection,
+                          source_crs: str, geometry_column: str, 
+                          table_name: str = None, schema: str = "public") -> Tuple[str, str]:
         """
         Get SQL expressions for centroid coordinates in WGS84.
         
         Args:
-            db_connection: DuckDB connection
+            db_connection: PostgreSQL connection
             source_crs: Source CRS of the geometry
             geometry_column: Name of the geometry column
             table_name: Optional table name for column type detection
+            schema: Database schema name
             
         Returns:
             Tuple of (longitude_expr, latitude_expr) SQL expressions
         """
-        # Determine the appropriate geometry expression based on column type
-        geom_expr = geometry_column  # Default assumption: GEOMETRY type
-        
-        if table_name:
-            try:
-                column_info = db_connection.execute(f"""
-                    SELECT column_type 
-                    FROM (DESCRIBE {table_name}) 
-                    WHERE column_name = '{geometry_column}'
-                """).fetchone()
-                
-                if column_info:
-                    column_type = column_info[0].upper()
-                    if 'BLOB' in column_type:
-                        # Column is BLOB, needs conversion
-                        geom_expr = f"ST_GeomFromWKB({geometry_column})"
-                    # If GEOMETRY type, use column directly (already set above)
-            except Exception as e:
-                logger.debug(f"Could not detect column type, using default: {e}")
-        
         # Transform to WGS84 if needed
         if source_crs != self.WGS84:
-            geom_expr = f"ST_Transform({geom_expr}, '{source_crs}', '{self.WGS84}')"
+            srid = int(source_crs.split(':')[1])
+            geom_expr = f"ST_Transform(ST_SetSRID({geometry_column}, {srid}), 4326)"
+        else:
+            geom_expr = geometry_column
         
         # Get centroid coordinates
         lon_expr = f"ST_X(ST_Centroid({geom_expr}))"
@@ -279,31 +233,30 @@ class DatabaseCRSManager:
         
         return lon_expr, lat_expr
     
-    def setup_crs_for_table(self, db_connection: duckdb.DuckDBPyConnection,
-                           table_name: str, geometry_column: str = "geometry") -> Dict[str, Any]:
+    def setup_crs_for_table(self, db_connection: Connection,
+                           table_name: str, geometry_column: str = "geometry",
+                           schema: str = "public") -> Dict[str, Any]:
         """
         Set up CRS handling for a table by detecting source CRS and preparing transformations.
         
         Args:
-            db_connection: DuckDB connection
+            db_connection: PostgreSQL connection
             table_name: Name of the table
             geometry_column: Name of the geometry column
+            schema: Database schema name
             
         Returns:
             Dictionary with CRS information and transformation functions
         """
-        # Load spatial extension
-        db_connection.execute('INSTALL spatial; LOAD spatial;')
-        
         # Detect source CRS
-        source_crs = self.detect_source_crs(db_connection, table_name, geometry_column)
+        source_crs = self.detect_source_crs(db_connection, table_name, geometry_column, schema=schema)
         
         if not source_crs:
             logger.warning(f"Could not detect CRS for table {table_name}, assuming WGS84")
             source_crs = self.WGS84
         
         # Get transformation expressions
-        lon_expr, lat_expr = self.get_centroid_wgs84(db_connection, source_crs, geometry_column, table_name)
+        lon_expr, lat_expr = self.get_centroid_wgs84(db_connection, source_crs, geometry_column, table_name, schema)
         
         return {
             'source_crs': source_crs,
@@ -314,57 +267,38 @@ class DatabaseCRSManager:
             'needs_transformation': source_crs != self.WGS84
         }
     
-    def validate_coordinates(self, longitude: float, latitude: float, 
-                           expected_region: str = "us") -> bool:
+    def set_table_srid(self, db_connection: Connection,
+                      table_name: str, geometry_column: str,
+                      srid: int, schema: str = "public") -> None:
         """
-        Validate that coordinates are reasonable for the expected region.
+        Set the SRID for a geometry column.
         
         Args:
-            longitude: Longitude coordinate
-            latitude: Latitude coordinate
-            expected_region: Expected geographic region
-            
-        Returns:
-            True if coordinates are valid for the region
-        """
-        if expected_region.lower() == "north_carolina":
-            # North Carolina bounds: approximately 33.7°N to 36.6°N, 84.3°W to 75.4°W
-            # Expand slightly for safety: 33°N to 37°N, 85°W to 75°W
-            return (33.0 <= latitude <= 37.0 and -85.0 <= longitude <= -75.0)
-        elif expected_region == "us":
-            return -180 <= longitude <= -60 and 15 <= latitude <= 72
-        else:
-            return -180 <= longitude <= 180 and -90 <= latitude <= 90
-    
-    def get_area_calculation_crs(self) -> str:
-        """
-        Get the CRS to use for area calculations.
-        
-        Returns:
-            CRS string for area calculations (US Albers Equal Area)
-        """
-        return self.US_ALBERS
-    
-    def create_area_calculation_expression(self, geometry_column: str, 
-                                         source_crs: str) -> str:
-        """
-        Create SQL expression for area calculation in appropriate CRS.
-        
-        Args:
+            db_connection: PostgreSQL connection
+            table_name: Name of the table
             geometry_column: Name of the geometry column
-            source_crs: Source CRS of the geometry
-            
-        Returns:
-            SQL expression for area calculation
+            srid: SRID to set
+            schema: Database schema name
         """
-        geom_expr = f"ST_GeomFromWKB({geometry_column})"
-        
-        # Transform to US Albers for area calculation if needed
-        if source_crs != self.US_ALBERS:
-            geom_expr = f"ST_Transform({geom_expr}, '{source_crs}', '{self.US_ALBERS}')"
-        
-        return f"ST_Area({geom_expr})"
+        try:
+            # Update the geometry_columns table
+            update_query = text("""
+                SELECT UpdateGeometrySRID(:schema, :table_name, :geometry_column, :srid);
+            """)
+            
+            db_connection.execute(update_query, {
+                'schema': schema,
+                'table_name': table_name,
+                'geometry_column': geometry_column,
+                'srid': srid
+            })
+            
+            logger.info(f"Set SRID {srid} for {schema}.{table_name}.{geometry_column}")
+            
+        except Exception as e:
+            logger.error(f"Failed to set SRID: {e}")
+            raise
 
 
-# Create singleton instance
-database_crs_manager = DatabaseCRSManager() if GEOSPATIAL_AVAILABLE else None 
+# Global instance for convenience
+database_crs_manager = DatabaseCRSManager() 

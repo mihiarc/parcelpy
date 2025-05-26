@@ -1,7 +1,7 @@
 """
 ParcelDB - High-level interface for parcel data operations.
 
-Provides specialized methods for working with parcel datasets in DuckDB.
+Provides specialized methods for working with parcel datasets in PostgreSQL with PostGIS.
 """
 
 import logging
@@ -16,29 +16,39 @@ logger = logging.getLogger(__name__)
 
 class ParcelDB:
     """
-    High-level interface for parcel data operations using DuckDB.
+    High-level interface for parcel data operations using PostgreSQL with PostGIS.
     
     Provides specialized methods for parcel data ingestion, querying, and analysis.
     """
     
-    def __init__(self, db_path: Optional[Union[str, Path]] = None, 
-                 memory_limit: str = "4GB", threads: int = 4):
+    def __init__(self, 
+                 host: Optional[str] = None,
+                 port: Optional[int] = None,
+                 database: Optional[str] = None,
+                 user: Optional[str] = None,
+                 password: Optional[str] = None,
+                 schema: Optional[str] = None,
+                 **kwargs):
         """
         Initialize ParcelDB.
         
         Args:
-            db_path: Path to the DuckDB database file
-            memory_limit: Memory limit for DuckDB operations
-            threads: Number of threads for parallel operations
+            host: Database host
+            port: Database port
+            database: Database name
+            user: Database user
+            password: Database password
+            schema: Database schema
+            **kwargs: Additional connection parameters
         """
-        self.db_manager = DatabaseManager(db_path, memory_limit, threads)
+        self.db_manager = DatabaseManager(host, port, database, user, password, schema, **kwargs)
         self._setup_parcel_schema()
     
     def _setup_parcel_schema(self):
         """Set up the standard parcel schema and indexes."""
         try:
-            # Create indexes for common query patterns
-            # Note: DuckDB automatically creates indexes for primary keys
+            # Create common indexes for parcel queries
+            # PostgreSQL automatically creates indexes for primary keys and unique constraints
             logger.info("Parcel schema setup completed")
         except Exception as e:
             logger.error(f"Failed to setup parcel schema: {e}")
@@ -172,7 +182,7 @@ class ParcelDB:
             
             if not geometry_columns.empty:
                 geom_col = geometry_columns.iloc[0]['column_name']
-                # DuckDB spatial extension automatically handles spatial indexing
+                # PostgreSQL spatial extension automatically handles spatial indexing
                 logger.info(f"Spatial indexing available for column '{geom_col}' in table '{table_name}'")
             
         except Exception as e:

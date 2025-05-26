@@ -1,13 +1,13 @@
 """
 Database configuration and path management for ParcelPy.
 
-This module provides centralized configuration for database paths,
-connection settings, and environment variable overrides.
+This module provides centralized configuration for database connections,
+environment variable overrides, and PostgreSQL with PostGIS settings.
 """
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,31 +17,36 @@ class DatabaseConfig:
     """
     Centralized configuration for ParcelPy database operations.
     
-    Provides path management, environment variable support, and database settings.
+    Provides connection management, environment variable support, and database settings.
     """
     
     # Base directories
     BASE_DIR = Path(__file__).parent.parent.parent
-    DB_DIR = BASE_DIR / "databases"
     DATA_DIR = BASE_DIR / "data"
     
     # Environment variable overrides
-    DB_DIR = Path(os.getenv("PARCELPY_DB_DIR", DB_DIR))
     DATA_DIR = Path(os.getenv("PARCELPY_DATA_DIR", DATA_DIR))
     CACHE_DIR = Path(os.getenv("PARCELPY_CACHE_DIR", DATA_DIR / "cache"))
-    
-    # Specific database directories
-    DEV_DB_DIR = DB_DIR / "development"
-    TEST_DB_DIR = DB_DIR / "test"
-    EXAMPLE_DB_DIR = DB_DIR / "examples"
     
     # Data directories
     SAMPLE_DATA_DIR = DATA_DIR / "sample"
     EXTERNAL_DATA_DIR = DATA_DIR / "external"
     
-    # Default database settings
-    DEFAULT_MEMORY_LIMIT = "4GB"
-    DEFAULT_THREADS = 4
+    # PostgreSQL connection settings
+    DEFAULT_HOST = os.getenv("PARCELPY_DB_HOST", "localhost")
+    DEFAULT_PORT = int(os.getenv("PARCELPY_DB_PORT", "5432"))
+    DEFAULT_DATABASE = os.getenv("PARCELPY_DB_NAME", "parcelpy")
+    DEFAULT_USER = os.getenv("PARCELPY_DB_USER", "parcelpy")
+    DEFAULT_PASSWORD = os.getenv("PARCELPY_DB_PASSWORD", "")
+    DEFAULT_SCHEMA = os.getenv("PARCELPY_DB_SCHEMA", "public")
+    
+    # Connection pool settings
+    DEFAULT_POOL_SIZE = int(os.getenv("PARCELPY_DB_POOL_SIZE", "5"))
+    DEFAULT_MAX_OVERFLOW = int(os.getenv("PARCELPY_DB_MAX_OVERFLOW", "10"))
+    DEFAULT_POOL_TIMEOUT = int(os.getenv("PARCELPY_DB_POOL_TIMEOUT", "30"))
+    
+    # PostGIS settings
+    DEFAULT_SRID = int(os.getenv("PARCELPY_DEFAULT_SRID", "4326"))  # WGS84
     
     # NC-specific configuration
     NC_PARCEL_SOURCE_CRS = "EPSG:2264"  # NAD83 / North Carolina (ftUS) - confirmed from source geopackage
@@ -51,10 +56,6 @@ class DatabaseConfig:
     def ensure_directories(cls) -> None:
         """Create all necessary directories if they don't exist."""
         directories = [
-            cls.DB_DIR,
-            cls.DEV_DB_DIR,
-            cls.TEST_DB_DIR,
-            cls.EXAMPLE_DB_DIR,
             cls.DATA_DIR,
             cls.SAMPLE_DATA_DIR,
             cls.CACHE_DIR,
@@ -63,30 +64,6 @@ class DatabaseConfig:
         
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
-    
-    @classmethod
-    def get_dev_db_path(cls, name: str) -> Path:
-        """Get path for a development database."""
-        cls.ensure_directories()
-        if not name.endswith('.duckdb'):
-            name += '.duckdb'
-        return cls.DEV_DB_DIR / name
-    
-    @classmethod
-    def get_test_db_path(cls, name: str) -> Path:
-        """Get path for a test database."""
-        cls.ensure_directories()
-        if not name.endswith('.duckdb'):
-            name += '.duckdb'
-        return cls.TEST_DB_DIR / name
-    
-    @classmethod
-    def get_example_db_path(cls, name: str) -> Path:
-        """Get path for an example database."""
-        cls.ensure_directories()
-        if not name.endswith('.duckdb'):
-            name += '.duckdb'
-        return cls.EXAMPLE_DB_DIR / name
     
     @classmethod
     def get_sample_data_path(cls, filename: str) -> Path:
@@ -148,62 +125,71 @@ class DatabaseConfig:
         return cls.NC_CRS_DETECTION_COMPLETE
 
 
-class DatabasePaths:
-    """Convenience class for common database paths."""
-    
-    # Test databases
-    TEST_MITCHELL = DatabaseConfig.get_test_db_path("test_mitchell_parcels")
-    TEST_MULTI_COUNTY = DatabaseConfig.get_test_db_path("test_multi_county")
-    TEST_CENSUS = DatabaseConfig.get_test_db_path("test_census_integration")
-    
-    # Example databases
-    EXAMPLE_BASIC = DatabaseConfig.get_example_db_path("example_basic_parcels")
-    EXAMPLE_CENSUS = DatabaseConfig.get_example_db_path("example_census_enriched")
-    EXAMPLE_SPATIAL = DatabaseConfig.get_example_db_path("example_spatial_analysis")
-    
-    # Development databases (current date)
-    from datetime import datetime
-    today = datetime.now().strftime("%Y%m%d")
-    DEV_CURRENT = DatabaseConfig.get_dev_db_path(f"dev_current_{today}")
-
-
-def get_database_path(
-    db_type: str, 
-    name: str, 
-    create_dirs: bool = True
-) -> Path:
+def get_connection_config(
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    database: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
+    schema: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    Get database path by type and name.
+    Get PostgreSQL connection configuration.
     
     Args:
-        db_type: Type of database ('dev', 'test', 'example')
-        name: Database name (without .duckdb extension)
-        create_dirs: Whether to create directories if they don't exist
+        host: Database host (defaults to environment variable or localhost)
+        port: Database port (defaults to environment variable or 5432)
+        database: Database name (defaults to environment variable or parcelpy)
+        user: Database user (defaults to environment variable or parcelpy)
+        password: Database password (defaults to environment variable)
+        schema: Database schema (defaults to environment variable or public)
         
     Returns:
-        Path to the database file
-        
-    Raises:
-        ValueError: If db_type is not recognized
+        Dictionary with connection parameters
     """
-    if create_dirs:
-        DatabaseConfig.ensure_directories()
-    
-    if db_type == 'dev' or db_type == 'development':
-        return DatabaseConfig.get_dev_db_path(name)
-    elif db_type == 'test':
-        return DatabaseConfig.get_test_db_path(name)
-    elif db_type == 'example':
-        return DatabaseConfig.get_example_db_path(name)
-    else:
-        raise ValueError(f"Unknown database type: {db_type}")
-
-
-def get_connection_config() -> dict:
-    """Get default DuckDB connection configuration."""
     return {
-        'memory_limit': os.getenv('PARCELPY_MEMORY_LIMIT', DatabaseConfig.DEFAULT_MEMORY_LIMIT),
-        'threads': int(os.getenv('PARCELPY_THREADS', DatabaseConfig.DEFAULT_THREADS)),
-        'enable_progress_bar': True,
-        'enable_object_cache': True,
-    } 
+        'host': host or DatabaseConfig.DEFAULT_HOST,
+        'port': port or DatabaseConfig.DEFAULT_PORT,
+        'database': database or DatabaseConfig.DEFAULT_DATABASE,
+        'user': user or DatabaseConfig.DEFAULT_USER,
+        'password': password or DatabaseConfig.DEFAULT_PASSWORD,
+        'schema': schema or DatabaseConfig.DEFAULT_SCHEMA,
+        'pool_size': DatabaseConfig.DEFAULT_POOL_SIZE,
+        'max_overflow': DatabaseConfig.DEFAULT_MAX_OVERFLOW,
+        'pool_timeout': DatabaseConfig.DEFAULT_POOL_TIMEOUT,
+        'srid': DatabaseConfig.DEFAULT_SRID
+    }
+
+
+def get_connection_url(
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+    database: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None
+) -> str:
+    """
+    Get PostgreSQL connection URL for SQLAlchemy.
+    
+    Args:
+        host: Database host
+        port: Database port
+        database: Database name
+        user: Database user
+        password: Database password
+        
+    Returns:
+        PostgreSQL connection URL
+    """
+    config = get_connection_config(host, port, database, user, password)
+    
+    # Build connection URL
+    url = f"postgresql://{config['user']}"
+    if config['password']:
+        url += f":{config['password']}"
+    url += f"@{config['host']}:{config['port']}/{config['database']}"
+    
+    return url
+
+
+ 

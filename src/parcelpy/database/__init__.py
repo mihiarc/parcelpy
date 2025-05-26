@@ -1,7 +1,7 @@
 """
 ParcelPy Database Module
 
-A DuckDB-based database module for efficient storage and querying of parcel data.
+A PostgreSQL with PostGIS-based database module for efficient storage and querying of parcel data.
 Provides high-performance analytics on geospatial parcel datasets.
 """
 
@@ -12,6 +12,7 @@ from .core.census_integration import CensusIntegration
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
 from .crs_manager import DatabaseCRSManager, database_crs_manager
+from .config import get_connection_config, get_connection_url
 
 __version__ = "0.1.0"
 __all__ = [
@@ -22,5 +23,7 @@ __all__ = [
     "DataIngestion",
     "SchemaManager",
     "DatabaseCRSManager",
-    "database_crs_manager"
+    "database_crs_manager",
+    "get_connection_config",
+    "get_connection_url"
 ] 

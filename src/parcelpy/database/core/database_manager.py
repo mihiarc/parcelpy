@@ -1,5 +1,5 @@
 """
-Database Manager for ParcelPy DuckDB integration.
+Database Manager for ParcelPy PostgreSQL with PostGIS integration.
 
 Provides centralized database connection management and basic operations.
 """
@@ -7,94 +7,107 @@ Provides centralized database connection management and basic operations.
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Tuple
 from contextlib import contextmanager
-import duckdb
 import pandas as pd
 import geopandas as gpd
+from sqlalchemy import create_engine, text, MetaData, Table, Column, Integer, String, Float, DateTime
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.engine import Engine
+from sqlalchemy.pool import QueuePool
+from geoalchemy2 import Geometry, Geography
+from geoalchemy2.functions import ST_AsText, ST_GeomFromText, ST_Transform, ST_SetSRID
+import psycopg2
+from ..config import get_connection_config, get_connection_url
 
 logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
     """
-    Centralized database manager for DuckDB operations.
+    Centralized database manager for PostgreSQL with PostGIS operations.
     
     Handles connection management, database initialization, and basic operations.
     """
     
-    def __init__(self, db_path: Optional[Union[str, Path]] = None, 
-                 memory_limit: str = "4GB", threads: int = 4):
+    def __init__(self, 
+                 host: Optional[str] = None,
+                 port: Optional[int] = None,
+                 database: Optional[str] = None,
+                 user: Optional[str] = None,
+                 password: Optional[str] = None,
+                 schema: Optional[str] = None,
+                 **kwargs):
         """
         Initialize the database manager.
         
         Args:
-            db_path: Path to the DuckDB database file. If None, uses in-memory database.
-            memory_limit: Memory limit for DuckDB operations (e.g., "4GB", "8GB")
-            threads: Number of threads for parallel operations
+            host: Database host
+            port: Database port
+            database: Database name
+            user: Database user
+            password: Database password
+            schema: Database schema
+            **kwargs: Additional connection parameters
         """
-        self.db_path = Path(db_path) if db_path else None
-        self.memory_limit = memory_limit
-        self.threads = threads
-        self._connection = None
-        self._extensions_loaded = False
+        self.config = get_connection_config(host, port, database, user, password, schema)
+        self.config.update(kwargs)
         
-        # Ensure database directory exists
-        if self.db_path:
-            self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            
+        self.connection_url = get_connection_url(
+            self.config['host'],
+            self.config['port'],
+            self.config['database'],
+            self.config['user'],
+            self.config['password']
+        )
+        
+        self.schema = self.config['schema']
+        self.srid = self.config['srid']
+        
+        # Initialize SQLAlchemy engine
+        self.engine = self._create_engine()
+        self.SessionLocal = sessionmaker(bind=self.engine)
+        self.metadata = MetaData(schema=self.schema)
+        
+        # Initialize database
         self._initialize_database()
     
+    def _create_engine(self) -> Engine:
+        """Create SQLAlchemy engine with connection pooling."""
+        engine = create_engine(
+            self.connection_url,
+            poolclass=QueuePool,
+            pool_size=self.config['pool_size'],
+            max_overflow=self.config['max_overflow'],
+            pool_timeout=self.config['pool_timeout'],
+            pool_pre_ping=True,  # Verify connections before use
+            echo=False  # Set to True for SQL debugging
+        )
+        return engine
+    
     def _initialize_database(self):
-        """Initialize the database with required extensions and settings."""
+        """Initialize the database with PostGIS extension and required settings."""
         try:
-            # Create initial connection for setup
-            if self.db_path:
-                conn = duckdb.connect(str(self.db_path))
-            else:
-                # For in-memory databases, keep the connection persistent
-                conn = duckdb.connect(":memory:")
-                self._connection = conn
-            
-            try:
-                # Install and load spatial extension (only once during initialization)
+            with self.get_connection() as conn:
+                # Enable PostGIS extension
                 try:
-                    conn.execute("INSTALL spatial;")
-                    conn.execute("LOAD spatial;")
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis_topology;"))
+                    conn.commit()
+                    logger.info("PostGIS extensions enabled")
                 except Exception as e:
-                    # Extension might already be installed/loaded
-                    logger.debug(f"Spatial extension setup: {e}")
+                    logger.warning(f"Could not enable PostGIS extensions: {e}")
+                
+                # Create schema if it doesn't exist
+                if self.schema != 'public':
                     try:
-                        conn.execute("LOAD spatial;")
-                    except Exception as e2:
-                        logger.debug(f"Could not load spatial extension: {e2}")
+                        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                        conn.commit()
+                        logger.info(f"Schema '{self.schema}' created/verified")
+                    except Exception as e:
+                        logger.warning(f"Could not create schema: {e}")
                 
-                # Install and load parquet extension
-                try:
-                    conn.execute("INSTALL parquet;")
-                    conn.execute("LOAD parquet;")
-                except Exception as e:
-                    logger.debug(f"Parquet extension setup: {e}")
-                    try:
-                        conn.execute("LOAD parquet;")
-                    except Exception as e2:
-                        logger.debug(f"Could not load parquet extension: {e2}")
-                
-                # Configure DuckDB settings
-                conn.execute(f"SET memory_limit='{self.memory_limit}';")
-                conn.execute(f"SET threads={self.threads};")
-                
-                # Enable parallel processing
-                conn.execute("SET enable_progress_bar=true;")
-                
-                logger.info(f"Database initialized at {self.db_path or 'memory'}")
-                logger.info(f"Memory limit: {self.memory_limit}, Threads: {self.threads}")
-                self._extensions_loaded = True
-                
-            finally:
-                # Only close connection for file-based databases
-                if self.db_path:
-                    conn.close()
+                logger.info(f"Database initialized: {self.config['host']}:{self.config['port']}/{self.config['database']}")
                 
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -106,34 +119,39 @@ class DatabaseManager:
         Get a database connection as a context manager.
         
         Yields:
-            duckdb.DuckDBPyConnection: Database connection
+            sqlalchemy.engine.Connection: Database connection
         """
-        if self.db_path:
-            # File-based database: create new connection each time
-            conn = None
-            try:
-                conn = duckdb.connect(str(self.db_path))
-                
-                # Try to load extensions for this connection
-                try:
-                    conn.execute("LOAD spatial;")
-                except Exception as e:
-                    logger.debug(f"Could not load spatial extension: {e}")
-                
-                try:
-                    conn.execute("LOAD parquet;")
-                except Exception as e:
-                    logger.debug(f"Could not load parquet extension: {e}")
-                
-                yield conn
-            finally:
-                if conn:
-                    conn.close()
-        else:
-            # In-memory database: use persistent connection
-            if self._connection is None:
-                raise RuntimeError("In-memory database connection not initialized")
-            yield self._connection
+        conn = None
+        try:
+            conn = self.engine.connect()
+            yield conn
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Database connection error: {e}")
+            raise
+        finally:
+            if conn:
+                conn.close()
+    
+    @contextmanager
+    def get_session(self) -> Session:
+        """
+        Get a database session as a context manager.
+        
+        Yields:
+            sqlalchemy.orm.Session: Database session
+        """
+        session = self.SessionLocal()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database session error: {e}")
+            raise
+        finally:
+            session.close()
     
     def execute_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> pd.DataFrame:
         """
@@ -149,210 +167,139 @@ class DatabaseManager:
         try:
             with self.get_connection() as conn:
                 if parameters:
-                    result = conn.execute(query, parameters).fetchdf()
+                    result = pd.read_sql(text(query), conn, params=parameters)
                 else:
-                    result = conn.execute(query).fetchdf()
+                    result = pd.read_sql(text(query), conn)
                 return result
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
             logger.error(f"Query: {query}")
             raise
     
-    def execute_spatial_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> gpd.GeoDataFrame:
+    def execute_spatial_query(self, query: str, 
+                            parameters: Optional[Dict[str, Any]] = None,
+                            geom_col: str = 'geometry') -> gpd.GeoDataFrame:
         """
         Execute a spatial SQL query and return results as a GeoDataFrame.
         
         Args:
             query: SQL query string that includes geometry columns
             parameters: Optional parameters for the query
+            geom_col: Name of the geometry column
             
         Returns:
             gpd.GeoDataFrame: Query results with geometry
         """
         try:
-            # First, execute the query to get the raw data
-            df = self.execute_query(query, parameters)
-            
-            # Find geometry columns (stored as BLOB in DuckDB)
-            geometry_columns = [col for col in df.columns if 'geom' in col.lower() or col == 'geometry']
-            
-            if geometry_columns:
-                # Assume the first geometry column is the primary geometry
-                geom_col = geometry_columns[0]
-                
-                # Get table name from query for schema inspection
-                table_name = self._extract_table_name_from_query(query)
-                
-                # Check the column type to determine how to handle geometry
-                column_type = None
-                if table_name:
-                    try:
-                        table_info = self.get_table_info(table_name)
-                        geom_row = table_info[table_info['column_name'] == geom_col]
-                        if not geom_row.empty:
-                            column_type = geom_row.iloc[0]['column_type'].upper()
-                            logger.debug(f"Geometry column '{geom_col}' type: {column_type}")
-                    except Exception as e:
-                        logger.debug(f"Could not determine column type: {e}")
-                
-                # Use WKT-based geometry conversion (more reliable than WKB)
-                geometry_converted = False
-                
-                # Primary approach: Use ST_AsText to convert to WKT, then parse with Shapely
-                try:
-                    # Determine the appropriate geometry expression based on column type
-                    if column_type and 'GEOMETRY' in column_type:
-                        # Column is already GEOMETRY type
-                        geom_expr = geom_col
-                    else:
-                        # Column is BLOB, needs conversion
-                        geom_expr = f"ST_GeomFromWKB({geom_col})"
-                    
-                    # Find a suitable ID column for the merge
-                    id_col = None
-                    for potential_id in ['parno', 'id', 'objectid', 'fid']:
-                        if potential_id in df.columns:
-                            id_col = potential_id
-                            break
-                    
-                    if not id_col:
-                        # Create a temporary index column
-                        df = df.reset_index()
-                        id_col = 'index'
-                    
-                    # Get WKT for all geometries
-                    ids = df[id_col].tolist()
-                    if ids:
-                        # Build the query to get WKT representations
-                        id_list = "', '".join([str(id) for id in ids])
-                        wkt_query = f"SELECT {id_col}, ST_AsText({geom_expr}) as geometry_wkt FROM {table_name} WHERE {id_col} IN ('{id_list}') AND {geom_col} IS NOT NULL"
-                        
-                        logger.debug(f"Converting geometry using WKT query: {wkt_query}")
-                        wkt_df = self.execute_query(wkt_query)
-                        
-                        # Merge WKT data back to original dataframe
-                        df = df.merge(wkt_df, on=id_col, how='left')
-                        
-                        # Convert WKT to Shapely geometries
-                        from shapely import wkt
-                        df[geom_col] = df['geometry_wkt'].apply(
-                            lambda x: wkt.loads(x) if x is not None and x != '' else None
-                        )
-                        df = df.drop(columns=['geometry_wkt'])
-                        geometry_converted = True
-                        logger.info(f"Successfully converted {len(df)} geometries using WKT method")
-                    
-                except Exception as e:
-                    logger.warning(f"WKT conversion failed: {e}")
-                
-                # Fallback approach: Try direct WKB conversion (less reliable)
-                if not geometry_converted:
-                    try:
-                        from shapely import wkb
-                        df[geom_col] = df[geom_col].apply(
-                            lambda x: wkb.loads(bytes(x)) if x is not None else None
-                        )
-                        geometry_converted = True
-                        logger.debug("Successfully converted geometry using direct WKB")
-                    except Exception as e:
-                        logger.debug(f"Direct WKB conversion failed: {e}")
-                
-                # If all geometry conversion attempts failed, create GeoDataFrame without geometry
-                if not geometry_converted:
-                    logger.warning(f"Could not convert geometry column '{geom_col}', creating GeoDataFrame without spatial data")
-                    # Remove the problematic geometry column and create a regular DataFrame
-                    df = df.drop(columns=[geom_col])
-                    return gpd.GeoDataFrame(df)
-                
-                # Create GeoDataFrame with converted geometry
-                gdf = gpd.GeoDataFrame(df, geometry=geom_col)
+            with self.get_connection() as conn:
+                if parameters:
+                    gdf = gpd.read_postgis(text(query), conn, geom_col=geom_col, params=parameters)
+                else:
+                    gdf = gpd.read_postgis(text(query), conn, geom_col=geom_col)
                 return gdf
-            else:
-                logger.warning("No geometry columns found in spatial query result")
-                return gpd.GeoDataFrame(df)
-                
         except Exception as e:
             logger.error(f"Spatial query execution failed: {e}")
+            logger.error(f"Query: {query}")
             raise
     
-    def _extract_table_name_from_query(self, query: str) -> Optional[str]:
+    def create_table_from_geodataframe(self, 
+                                     gdf: gpd.GeoDataFrame,
+                                     table_name: str,
+                                     if_exists: str = "replace",
+                                     index: bool = True,
+                                     geometry_col: str = 'geometry') -> None:
         """
-        Extract table name from a SQL query.
+        Create a table from a GeoDataFrame.
         
         Args:
-            query: SQL query string
-            
-        Returns:
-            Table name or None if not found
+            gdf: GeoDataFrame to store
+            table_name: Name of the table to create
+            if_exists: How to behave if table exists ('fail', 'replace', 'append')
+            index: Whether to include the DataFrame index
+            geometry_col: Name of the geometry column
         """
         try:
-            # Simple regex to extract table name from FROM clause
-            import re
-            match = re.search(r'FROM\s+(\w+)', query, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        except Exception:
-            pass
-        return None
+            # Ensure geometry is in the correct SRID
+            if gdf.crs is None:
+                logger.warning(f"No CRS specified for {table_name}, assuming EPSG:{self.srid}")
+                gdf = gdf.set_crs(f"EPSG:{self.srid}")
+            elif gdf.crs.to_epsg() != self.srid:
+                logger.info(f"Transforming {table_name} from {gdf.crs} to EPSG:{self.srid}")
+                gdf = gdf.to_crs(f"EPSG:{self.srid}")
+            
+            # Store in database
+            gdf.to_postgis(
+                table_name,
+                self.engine,
+                schema=self.schema,
+                if_exists=if_exists,
+                index=index
+            )
+            
+            # Create spatial index
+            self._create_spatial_index(table_name, geometry_col)
+            
+            logger.info(f"Table '{table_name}' created successfully with {len(gdf)} records")
+            
+        except Exception as e:
+            logger.error(f"Failed to create table from GeoDataFrame: {e}")
+            raise
     
-    def create_table_from_parquet(self, table_name: str, parquet_path: Union[str, Path], 
-                                 if_exists: str = "replace") -> None:
+    def create_table_from_parquet(self, 
+                                table_name: str, 
+                                parquet_path: Union[str, Path],
+                                if_exists: str = "replace") -> None:
         """
         Create a table from a Parquet file.
         
         Args:
             table_name: Name of the table to create
             parquet_path: Path to the Parquet file
-            if_exists: What to do if table exists ('replace', 'append', 'fail')
+            if_exists: How to behave if table exists ('fail', 'replace', 'append')
         """
         try:
-            parquet_path = Path(parquet_path)
-            if not parquet_path.exists():
-                raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
-            
-            with self.get_connection() as conn:
-                if if_exists == "replace":
-                    conn.execute(f"DROP TABLE IF EXISTS {table_name};")
-                    # Create table from parquet
-                    query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
-                    conn.execute(query)
-                elif if_exists == "fail":
-                    # Check if table exists
-                    result = conn.execute(
-                        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
-                        [table_name]
-                    ).fetchone()
-                    if result:
-                        raise ValueError(f"Table {table_name} already exists")
-                    # Create table from parquet
-                    query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
-                    conn.execute(query)
-                elif if_exists == "append":
-                    # Check if table exists
-                    result = conn.execute(
-                        "SELECT table_name FROM information_schema.tables WHERE table_name = ?",
-                        [table_name]
-                    ).fetchone()
-                    if result:
-                        # Table exists, append data
-                        query = f"INSERT INTO {table_name} SELECT * FROM read_parquet('{parquet_path}');"
-                        conn.execute(query)
-                    else:
-                        # Table doesn't exist, create it
-                        query = f"CREATE TABLE {table_name} AS SELECT * FROM read_parquet('{parquet_path}');"
-                        conn.execute(query)
+            # Read parquet file
+            if str(parquet_path).endswith('.parquet'):
+                gdf = gpd.read_parquet(parquet_path)
+            else:
+                # Try reading as regular DataFrame first
+                df = pd.read_parquet(parquet_path)
+                if 'geometry' in df.columns:
+                    gdf = gpd.GeoDataFrame(df)
                 else:
-                    raise ValueError(f"Invalid if_exists value: {if_exists}. Must be 'replace', 'append', or 'fail'")
-                
-                logger.info(f"{'Created' if if_exists != 'append' or not result else 'Appended to'} table '{table_name}' from {parquet_path}")
-                
+                    # No geometry column, create regular table
+                    df.to_sql(table_name, self.engine, schema=self.schema, 
+                             if_exists=if_exists, index=False)
+                    logger.info(f"Table '{table_name}' created from parquet (no geometry)")
+                    return
+            
+            # Create table from GeoDataFrame
+            self.create_table_from_geodataframe(gdf, table_name, if_exists)
+            
         except Exception as e:
             logger.error(f"Failed to create table from parquet: {e}")
             raise
     
+    def _create_spatial_index(self, table_name: str, geometry_col: str = 'geometry'):
+        """Create a spatial index on the geometry column."""
+        try:
+            index_name = f"idx_{table_name}_{geometry_col}"
+            full_table_name = f"{self.schema}.{table_name}" if self.schema != 'public' else table_name
+            
+            with self.get_connection() as conn:
+                conn.execute(text(f"""
+                    CREATE INDEX IF NOT EXISTS {index_name} 
+                    ON {full_table_name} 
+                    USING GIST ({geometry_col});
+                """))
+                conn.commit()
+                logger.debug(f"Spatial index created: {index_name}")
+        except Exception as e:
+            logger.warning(f"Could not create spatial index: {e}")
+    
     def get_table_info(self, table_name: str) -> pd.DataFrame:
         """
-        Get information about a table's schema.
+        Get information about table columns.
         
         Args:
             table_name: Name of the table
@@ -360,18 +307,40 @@ class DatabaseManager:
         Returns:
             pd.DataFrame: Table schema information
         """
-        query = f"DESCRIBE {table_name};"
-        return self.execute_query(query)
+        query = """
+            SELECT 
+                column_name,
+                data_type,
+                is_nullable,
+                column_default,
+                character_maximum_length,
+                numeric_precision,
+                numeric_scale
+            FROM information_schema.columns 
+            WHERE table_schema = :schema AND table_name = :table_name
+            ORDER BY ordinal_position;
+        """
+        
+        return self.execute_query(query, {
+            'schema': self.schema,
+            'table_name': table_name
+        })
     
     def list_tables(self) -> List[str]:
         """
-        List all tables in the database.
+        List all tables in the current schema.
         
         Returns:
-            List[str]: List of table names
+            List[str]: Table names
         """
-        query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main';"
-        result = self.execute_query(query)
+        query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = :schema AND table_type = 'BASE TABLE'
+            ORDER BY table_name;
+        """
+        
+        result = self.execute_query(query, {'schema': self.schema})
         return result['table_name'].tolist()
     
     def get_table_count(self, table_name: str) -> int:
@@ -384,37 +353,51 @@ class DatabaseManager:
         Returns:
             int: Number of rows
         """
-        query = f"SELECT COUNT(*) as count FROM {table_name};"
+        full_table_name = f"{self.schema}.{table_name}" if self.schema != 'public' else table_name
+        query = f"SELECT COUNT(*) as count FROM {full_table_name};"
+        
         result = self.execute_query(query)
-        return result['count'].iloc[0]
+        return int(result.iloc[0]['count'])
     
     def drop_table(self, table_name: str, if_exists: bool = True) -> None:
         """
-        Drop a table from the database.
+        Drop a table.
         
         Args:
             table_name: Name of the table to drop
             if_exists: If True, don't raise error if table doesn't exist
         """
         try:
+            full_table_name = f"{self.schema}.{table_name}" if self.schema != 'public' else table_name
+            if_exists_clause = "IF EXISTS" if if_exists else ""
+            
             with self.get_connection() as conn:
-                if if_exists:
-                    conn.execute(f"DROP TABLE IF EXISTS {table_name};")
-                else:
-                    conn.execute(f"DROP TABLE {table_name};")
-                logger.info(f"Dropped table '{table_name}'")
+                conn.execute(text(f"DROP TABLE {if_exists_clause} {full_table_name};"))
+                conn.commit()
+                logger.info(f"Table '{table_name}' dropped")
         except Exception as e:
-            logger.error(f"Failed to drop table {table_name}: {e}")
-            raise
+            logger.error(f"Failed to drop table '{table_name}': {e}")
+            if not if_exists:
+                raise
     
-    def vacuum(self) -> None:
-        """Vacuum the database to reclaim space."""
+    def vacuum_analyze(self, table_name: Optional[str] = None) -> None:
+        """
+        Run VACUUM ANALYZE on a table or the entire database.
+        
+        Args:
+            table_name: Optional table name. If None, analyzes entire database.
+        """
         try:
             with self.get_connection() as conn:
-                conn.execute("VACUUM;")
-                logger.info("Database vacuumed successfully")
+                if table_name:
+                    full_table_name = f"{self.schema}.{table_name}" if self.schema != 'public' else table_name
+                    conn.execute(text(f"VACUUM ANALYZE {full_table_name};"))
+                else:
+                    conn.execute(text("VACUUM ANALYZE;"))
+                conn.commit()
+                logger.info(f"VACUUM ANALYZE completed for {table_name or 'database'}")
         except Exception as e:
-            logger.error(f"Failed to vacuum database: {e}")
+            logger.error(f"VACUUM ANALYZE failed: {e}")
             raise
     
     def get_database_size(self) -> Dict[str, Any]:
@@ -422,18 +405,33 @@ class DatabaseManager:
         Get database size information.
         
         Returns:
-            Dict[str, Any]: Database size information
+            Dict[str, Any]: Database size statistics
         """
-        if not self.db_path or not self.db_path.exists():
-            return {"size_bytes": 0, "size_mb": 0, "size_gb": 0}
+        query = """
+            SELECT 
+                pg_database.datname as database_name,
+                pg_size_pretty(pg_database_size(pg_database.datname)) as size_pretty,
+                pg_database_size(pg_database.datname) as size_bytes
+            FROM pg_database 
+            WHERE datname = current_database();
+        """
         
-        size_bytes = self.db_path.stat().st_size
-        size_mb = size_bytes / (1024 * 1024)
-        size_gb = size_mb / 1024
+        result = self.execute_query(query)
+        if not result.empty:
+            return result.iloc[0].to_dict()
+        return {}
+    
+    def test_connection(self) -> bool:
+        """
+        Test the database connection.
         
-        return {
-            "size_bytes": size_bytes,
-            "size_mb": round(size_mb, 2),
-            "size_gb": round(size_gb, 2),
-            "path": str(self.db_path)
-        } 
+        Returns:
+            bool: True if connection successful
+        """
+        try:
+            with self.get_connection() as conn:
+                result = conn.execute(text("SELECT 1 as test;"))
+                return result.fetchone()[0] == 1
+        except Exception as e:
+            logger.error(f"Connection test failed: {e}")
+            return False 

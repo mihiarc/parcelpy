@@ -12,10 +12,10 @@ matplotlib
 pyyaml
 colorama>=0.4
 pytest>=7.0
-# PostgreSQL with PostGIS support
 psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
 geoalchemy2>=0.14.0
 streamlit
 earthengine-api
 geemap
+socialmapper>=0.4.3b0

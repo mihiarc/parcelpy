@@ -1,275 +1,26 @@
 {
   "version": "1.0",
-  "description": "Normalized ParcelPy database schema",
+  "description": "Normalized ParcelPy database schema (matches actual database)",
   "tables": {
     "parcel": {
-      "description": "Core table containing parcel information including property details, ownership, and geometry",
-      "primary_key": "parno",
+      "description": "Core table containing parcel information and geometry",
+      "primary_key": "id",
+      "unique_constraints": ["parno"],
       "columns": {
-        "parno": {
-          "type": "TEXT",
-          "description": "Primary parcel identifier",
-          "nullable": false
-        },
-        "altparno": {
-          "type": "TEXT",
-          "description": "Alternative parcel identifier"
-        },
-        "ownname": {
-          "type": "TEXT",
-          "description": "Owner name"
-        },
-        "improvval": {
-          "type": "DOUBLE PRECISION",
-          "description": "Improvement value"
-        },
-        "landval": {
-          "type": "DOUBLE PRECISION",
-          "description": "Land value"
-        },
-        "parval": {
-          "type": "DOUBLE PRECISION",
-          "description": "Total parcel value"
-        },
-        "mailadd": {
-          "type": "TEXT",
-          "description": "Mailing address"
-        },
-        "munit": {
-          "type": "TEXT",
-          "description": "Mailing unit"
-        },
-        "mcity": {
-          "type": "TEXT",
-          "description": "Mailing city"
-        },
-        "mstate": {
-          "type": "TEXT",
-          "description": "Mailing state"
-        },
-        "mzip": {
-          "type": "TEXT",
-          "description": "Mailing ZIP code"
-        },
-        "siteadd": {
-          "type": "TEXT",
-          "description": "Site address"
-        },
-        "sunit": {
-          "type": "TEXT",
-          "description": "Site unit"
-        },
-        "scity": {
-          "type": "TEXT",
-          "description": "Site city"
-        },
-        "gisacres": {
-          "type": "DOUBLE PRECISION",
-          "description": "GIS-calculated acres"
-        },
-        "struct": {
-          "type": "TEXT",
-          "description": "Structure information"
-        },
-        "multistruc": {
-          "type": "TEXT",
-          "description": "Multiple structure indicator"
-        },
-        "saledatetx": {
-          "type": "TEXT",
-          "description": "Sale date text"
-        },
-        "legdecfull": {
-          "type": "TEXT",
-          "description": "Full legal description"
-        },
-        "parusecode": {
-          "type": "TEXT",
-          "description": "Primary parcel use code"
-        },
-        "parusedesc": {
-          "type": "TEXT",
-          "description": "Primary parcel use description"
-        },
-        "parusecd2": {
-          "type": "TEXT",
-          "description": "Secondary parcel use code"
-        },
-        "parusedsc2": {
-          "type": "TEXT",
-          "description": "Secondary parcel use description"
-        },
-        "parvaltype": {
-          "type": "TEXT",
-          "description": "Parcel valuation type"
-        },
-        "owntype": {
-          "type": "TEXT",
-          "description": "Owner type"
-        },
-        "recareano": {
-          "type": "DOUBLE PRECISION",
-          "description": "Record area number"
-        },
-        "recareatx": {
-          "type": "TEXT",
-          "description": "Record area text"
-        },
-        "sourceref": {
-          "type": "TEXT",
-          "description": "Source reference"
-        },
-        "sourcedatx": {
-          "type": "TEXT",
-          "description": "Source date text"
-        },
-        "subdivisio": {
-          "type": "TEXT",
-          "description": "Subdivision"
-        },
-        "nparno": {
-          "type": "TEXT",
-          "description": "New parcel number"
-        },
-        "cntyname": {
-          "type": "TEXT",
-          "description": "County name"
-        },
-        "cntyfips": {
-          "type": "TEXT",
-          "description": "County FIPS code"
-        },
-        "stfips": {
-          "type": "TEXT",
-          "description": "State FIPS code"
-        },
-        "stcntyfips": {
-          "type": "TEXT",
-          "description": "State-County FIPS code"
-        },
-        "sourceagnt": {
-          "type": "TEXT",
-          "description": "Source agent"
-        },
-        "transfdate": {
-          "type": "TIMESTAMP",
-          "description": "Transfer date"
-        },
-        "maddpref": {
-          "type": "TEXT",
-          "description": "Mailing address prefix"
-        },
-        "maddrno": {
-          "type": "TEXT",
-          "description": "Mailing address number"
-        },
-        "maddstname": {
-          "type": "TEXT",
-          "description": "Mailing street name"
-        },
-        "maddstr": {
-          "type": "TEXT",
-          "description": "Mailing street"
-        },
-        "maddstsuf": {
-          "type": "TEXT",
-          "description": "Mailing street suffix"
-        },
-        "maddsttyp": {
-          "type": "TEXT",
-          "description": "Mailing street type"
-        },
-        "ownfrst": {
-          "type": "TEXT",
-          "description": "Owner first name"
-        },
-        "ownlast": {
-          "type": "TEXT",
-          "description": "Owner last name"
-        },
-        "revdatetx": {
-          "type": "TEXT",
-          "description": "Review date text"
-        },
-        "reviseyear": {
-          "type": "TEXT",
-          "description": "Revision year"
-        },
-        "saddno": {
-          "type": "TEXT",
-          "description": "Site address number"
-        },
-        "saddpref": {
-          "type": "TEXT",
-          "description": "Site address prefix"
-        },
-        "saddstname": {
-          "type": "TEXT",
-          "description": "Site street name"
-        },
-        "saddstr": {
-          "type": "TEXT",
-          "description": "Site street"
-        },
-        "saddstsuf": {
-          "type": "TEXT",
-          "description": "Site street suffix"
-        },
-        "saddsttyp": {
-          "type": "TEXT",
-          "description": "Site street type"
-        },
-        "sstate": {
-          "type": "TEXT",
-          "description": "Site state"
-        },
-        "stname": {
-          "type": "TEXT",
-          "description": "State name"
-        },
-        "subowntype": {
-          "type": "TEXT",
-          "description": "Sub-owner type"
-        },
-        "subsurfown": {
-          "type": "TEXT",
-          "description": "Subsurface ownership"
-        },
-        "szip": {
-          "type": "TEXT",
-          "description": "Site ZIP code"
-        },
-        "ownname2": {
-          "type": "TEXT",
-          "description": "Secondary owner name"
-        },
-        "presentval": {
-          "type": "TEXT",
-          "description": "Present value"
-        },
-        "mapref": {
-          "type": "TEXT",
-          "description": "Map reference"
-        },
-        "geometry": {
-          "type": "geometry",
-          "description": "Parcel boundary geometry"
-        },
-        "county": {
-          "type": "VARCHAR(50)",
-          "description": "County name"
-        },
-        "centroid": {
-          "type": "geometry(Point,4326)",
-          "description": "Parcel centroid in WGS84"
-        }
+        "id": {"type": "SERIAL", "description": "Auto-incrementing primary key"},
+        "parno": {"type": "VARCHAR(20)", "description": "Primary parcel identifier", "nullable": false},
+        "county_fips": {"type": "VARCHAR(3)", "description": "County FIPS code"},
+        "state_fips": {"type": "VARCHAR(2)", "description": "State FIPS code"},
+        "geometry": {"type": "geometry(MultiPolygon,4326)", "description": "Parcel boundary geometry"},
+        "centroid": {"type": "geometry(Point,4326)", "description": "Parcel centroid in WGS84"},
+        "created_at": {"type": "TIMESTAMP", "description": "Record creation timestamp", "default": "CURRENT_TIMESTAMP"},
+        "updated_at": {"type": "TIMESTAMP", "description": "Record last update timestamp", "default": "CURRENT_TIMESTAMP"}
       },
       "indexes": [
-        "idx_parcels_centroid ON (centroid) USING GIST",
-        "idx_parcels_county ON (county)",
-        "idx_parcels_geometry ON (geometry) USING GIST",
-        "idx_parcels_parno ON (parno)",
-        "idx_parcels_parval ON (parval) WHERE parval > 0"
+        "parcel_parno_key ON (parno) UNIQUE",
+        "idx_parcel_county_fips ON (county_fips)",
+        "idx_parcel_state_fips ON (state_fips)",
+        "idx_parcel_geom ON (geometry) USING GIST"
       ]
     },
     "property_info": {
@@ -277,61 +28,21 @@
       "primary_key": "id",
       "unique_constraints": ["parno"],
       "foreign_keys": [
-        {
-          "column": "parno",
-          "references": "parcels(parno)",
-          "on_delete": "CASCADE"
-        }
+        {"column": "parno", "references": "parcel(parno)", "on_delete": "CASCADE"}
       ],
       "columns": {
-        "id": {
-          "type": "SERIAL",
-          "description": "Auto-incrementing primary key"
-        },
-        "parno": {
-          "type": "TEXT",
-          "description": "Reference to parcels table",
-          "nullable": false
-        },
-        "land_use_code": {
-          "type": "TEXT",
-          "description": "Land use classification code",
-          "max_length": 35
-        },
-        "land_use_description": {
-          "type": "TEXT",
-          "description": "Description of land use",
-          "max_length": 100
-        },
-        "property_type": {
-          "type": "TEXT",
-          "description": "Type of property"
-        },
-        "acres": {
-          "type": "DOUBLE PRECISION",
-          "description": "Property size in acres"
-        },
-        "square_feet": {
-          "type": "DOUBLE PRECISION",
-          "description": "Property size in square feet"
-        },
-        "legal_description": {
-          "type": "TEXT",
-          "description": "Full legal description of the property",
-          "max_length": 254
-        },
-        "created_at": {
-          "type": "TIMESTAMP",
-          "description": "Record creation timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updated_at": {
-          "type": "TIMESTAMP",
-          "description": "Record last update timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "id": {"type": "SERIAL", "description": "Auto-incrementing primary key"},
+        "parno": {"type": "VARCHAR(20)", "description": "Reference to parcel table", "nullable": false},
+        "land_use_code": {"type": "VARCHAR", "description": "Land use classification code"},
+        "land_use_description": {"type": "VARCHAR", "description": "Description of land use"},
+        "property_type": {"type": "VARCHAR", "description": "Type of property"},
+        "acres": {"type": "DOUBLE PRECISION", "description": "Property size in acres"},
+        "square_feet": {"type": "DOUBLE PRECISION", "description": "Property size in square feet"},
+        "created_at": {"type": "TIMESTAMP", "description": "Record creation timestamp", "default": "CURRENT_TIMESTAMP"},
+        "updated_at": {"type": "TIMESTAMP", "description": "Record last update timestamp", "default": "CURRENT_TIMESTAMP"}
       },
       "indexes": [
+        "property_info_parno_key ON (parno) UNIQUE",
         "idx_property_info_land_use ON (land_use_code)",
         "idx_property_info_property_type ON (property_type)"
       ]
@@ -341,58 +52,22 @@
       "primary_key": "id",
       "unique_constraints": ["parno"],
       "foreign_keys": [
-        {
-          "column": "parno",
-          "references": "parcels(parno)",
-          "on_delete": "CASCADE"
-        }
+        {"column": "parno", "references": "parcel(parno)", "on_delete": "CASCADE"}
       ],
       "columns": {
-        "id": {
-          "type": "SERIAL",
-          "description": "Auto-incrementing primary key"
-        },
-        "parno": {
-          "type": "TEXT",
-          "description": "Reference to parcels table",
-          "nullable": false
-        },
-        "land_value": {
-          "type": "DOUBLE PRECISION",
-          "description": "Assessed value of land"
-        },
-        "improvement_value": {
-          "type": "DOUBLE PRECISION",
-          "description": "Assessed value of improvements"
-        },
-        "total_value": {
-          "type": "DOUBLE PRECISION",
-          "description": "Total assessed value"
-        },
-        "assessed_value": {
-          "type": "DOUBLE PRECISION",
-          "description": "Official assessed value"
-        },
-        "sale_date": {
-          "type": "DATE",
-          "description": "Date of last sale"
-        },
-        "assessment_date": {
-          "type": "DATE",
-          "description": "Date of last assessment"
-        },
-        "created_at": {
-          "type": "TIMESTAMP",
-          "description": "Record creation timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updated_at": {
-          "type": "TIMESTAMP",
-          "description": "Record last update timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "id": {"type": "SERIAL", "description": "Auto-incrementing primary key"},
+        "parno": {"type": "VARCHAR(20)", "description": "Reference to parcel table", "nullable": false},
+        "land_value": {"type": "DOUBLE PRECISION", "description": "Assessed value of land"},
+        "improvement_value": {"type": "DOUBLE PRECISION", "description": "Assessed value of improvements"},
+        "total_value": {"type": "DOUBLE PRECISION", "description": "Total assessed value"},
+        "assessed_value": {"type": "DOUBLE PRECISION", "description": "Official assessed value"},
+        "sale_date": {"type": "DATE", "description": "Date of last sale"},
+        "assessment_date": {"type": "DATE", "description": "Date of last assessment"},
+        "created_at": {"type": "TIMESTAMP", "description": "Record creation timestamp", "default": "CURRENT_TIMESTAMP"},
+        "updated_at": {"type": "TIMESTAMP", "description": "Record last update timestamp", "default": "CURRENT_TIMESTAMP"}
       },
       "indexes": [
+        "property_values_parno_key ON (parno) UNIQUE",
         "idx_property_values_sale_date ON (sale_date)",
         "idx_property_values_assessment_date ON (assessment_date)"
       ]
@@ -402,107 +77,30 @@
       "primary_key": "id",
       "unique_constraints": ["parno"],
       "foreign_keys": [
-        {
-          "column": "parno",
-          "references": "parcels(parno)",
-          "on_delete": "CASCADE"
-        }
+        {"column": "parno", "references": "parcel(parno)", "on_delete": "CASCADE"}
       ],
       "columns": {
-        "id": {
-          "type": "SERIAL",
-          "description": "Auto-incrementing primary key"
-        },
-        "parno": {
-          "type": "TEXT",
-          "description": "Reference to parcels table",
-          "nullable": false
-        },
-        "owner_name": {
-          "type": "TEXT",
-          "description": "Full name of owner",
-          "max_length": 200
-        },
-        "owner_first": {
-          "type": "TEXT",
-          "description": "Owner's first name",
-          "max_length": 57
-        },
-        "owner_last": {
-          "type": "TEXT",
-          "description": "Owner's last name",
-          "max_length": 100
-        },
-        "owner_type": {
-          "type": "TEXT",
-          "description": "Type of owner (individual, company, etc.)",
-          "max_length": 21
-        },
-        "mail_address": {
-          "type": "TEXT",
-          "description": "Mailing address",
-          "max_length": 109
-        },
-        "mail_unit": {
-          "type": "TEXT",
-          "description": "Mailing address unit/apartment",
-          "max_length": 25
-        },
-        "mail_city": {
-          "type": "TEXT",
-          "description": "Mailing address city",
-          "max_length": 36
-        },
-        "mail_state": {
-          "type": "TEXT",
-          "description": "Mailing address state",
-          "max_length": 2
-        },
-        "mail_zip": {
-          "type": "TEXT",
-          "description": "Mailing address ZIP code",
-          "max_length": 11
-        },
-        "site_address": {
-          "type": "TEXT",
-          "description": "Physical property address",
-          "max_length": 109
-        },
-        "site_unit": {
-          "type": "TEXT",
-          "description": "Property unit/apartment",
-          "max_length": 25
-        },
-        "site_city": {
-          "type": "TEXT",
-          "description": "Property city",
-          "max_length": 36
-        },
-        "site_state": {
-          "type": "TEXT",
-          "description": "Property state",
-          "max_length": 2
-        },
-        "site_zip": {
-          "type": "TEXT",
-          "description": "Property ZIP code",
-          "max_length": 11
-        },
-        "created_at": {
-          "type": "TIMESTAMP",
-          "description": "Record creation timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        },
-        "updated_at": {
-          "type": "TIMESTAMP",
-          "description": "Record last update timestamp",
-          "default": "CURRENT_TIMESTAMP"
-        }
+        "id": {"type": "SERIAL", "description": "Auto-incrementing primary key"},
+        "parno": {"type": "VARCHAR(20)", "description": "Reference to parcel table", "nullable": false},
+        "owner_name": {"type": "VARCHAR", "description": "Full name of owner"},
+        "owner_first": {"type": "VARCHAR", "description": "Owner's first name"},
+        "owner_last": {"type": "VARCHAR", "description": "Owner's last name"},
+        "owner_type": {"type": "VARCHAR", "description": "Type of owner (individual, company, etc.)"},
+        "mail_address": {"type": "VARCHAR", "description": "Mailing address"},
+        "mail_city": {"type": "VARCHAR", "description": "Mailing address city"},
+        "mail_state": {"type": "VARCHAR", "description": "Mailing address state"},
+        "mail_zip": {"type": "VARCHAR", "description": "Mailing address ZIP code"},
+        "site_address": {"type": "VARCHAR", "description": "Physical property address"},
+        "site_city": {"type": "VARCHAR", "description": "Property city"},
+        "site_state": {"type": "VARCHAR", "description": "Property state"},
+        "site_zip": {"type": "VARCHAR", "description": "Property ZIP code"},
+        "created_at": {"type": "TIMESTAMP", "description": "Record creation timestamp", "default": "CURRENT_TIMESTAMP"},
+        "updated_at": {"type": "TIMESTAMP", "description": "Record last update timestamp", "default": "CURRENT_TIMESTAMP"}
       },
       "indexes": [
+        "owner_info_parno_key ON (parno) UNIQUE",
         "idx_owner_info_owner_name ON (owner_name)",
-        "idx_owner_info_site_zip ON (site_zip)",
-        "idx_owner_info_mail_zip ON (mail_zip)"
+        "idx_owner_info_site_zip ON (site_zip)"
       ]
     }
   }

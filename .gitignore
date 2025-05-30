@@ -99,3 +99,12 @@ docs/_build/
 .env.development.local
 .env.test.local
 .env.production.local 
+# Database organization
+# Database directories
+databases/
+data/cache/
+data/external/
+temp/
+# Large data files
+*.sqlite*
+uv.lock

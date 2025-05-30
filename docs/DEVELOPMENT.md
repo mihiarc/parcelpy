@@ -13,7 +13,7 @@ parcelpy/                   # Project root
 ├── pyproject.toml          # Package configuration
 ├── README.md
 ├── DEVELOPMENT.md
-├── parcelpy/               # Main package directory
+├── src/               # Main package directory
 │   ├── __init__.py         # Root package with core exports
 │   ├── database/           # Database operations module
 │   │   ├── __init__.py     # Database module exports

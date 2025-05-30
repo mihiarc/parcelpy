@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convenience script for address lookup functionality.
+Convenience script for ParcelPy address lookup functionality.
 
 This script can be run from the project root directory and provides
 easy access to the address lookup and neighborhood mapping features.
@@ -31,122 +31,151 @@ from pathlib import Path
 # Add the src directory to Python path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+from rich.panel import Panel
+from rich.progress import track
+
+console = Console()
+
 def main():
     """Main entry point for the address lookup script."""
     parser = argparse.ArgumentParser(
-        description="ParcelPy Address Lookup and Neighborhood Mapping",
+        description="Search for parcels by address and create neighborhood maps",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
     
-    parser.add_argument('--database', required=True, 
-                       help='Database connection string (postgresql://user:pass@host:port/db)')
-    parser.add_argument('--address', required=True, 
-                       help='Address to search for')
-    parser.add_argument('--search-type', default='both', choices=['site', 'mail', 'both'],
-                       help='Type of address to search: site (property), mail (mailing), or both')
-    parser.add_argument('--buffer-meters', type=float, default=500,
-                       help='Buffer distance in meters around target parcels (default: 500)')
-    parser.add_argument('--max-neighbors', type=int, default=50,
-                       help='Maximum number of neighboring parcels to include (default: 50)')
-    parser.add_argument('--exact-match', action='store_true',
-                       help='Use exact address matching instead of fuzzy matching')
-    parser.add_argument('--output-dir', default='output',
-                       help='Output directory for maps and reports (default: output)')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                       help='Enable verbose logging')
+    # Make database optional - will use default DatabaseManager configuration
+    parser.add_argument("--database", type=str, help="Database connection string (optional - uses default config if not provided)")
+    parser.add_argument("--address", type=str, required=True, help="Address to search for")
+    parser.add_argument("--search-type", choices=["site", "mail", "both"], default="both", 
+                       help="Type of address to search (default: both)")
+    parser.add_argument("--buffer-meters", type=float, default=500,
+                       help="Buffer distance around target parcels in meters (default: 500)")
+    parser.add_argument("--max-neighbors", type=int, default=50,
+                       help="Maximum number of neighboring parcels to include (default: 50)")
+    parser.add_argument("--exact-match", action="store_true",
+                       help="Use exact matching instead of fuzzy matching")
+    parser.add_argument("--output-dir", type=str, default="output",
+                       help="Output directory for maps and reports (default: output)")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
     
+    if args.verbose:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+    
     try:
-        # Import the visualizer
-        from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
+        # Display header
+        console.print(Panel.fit("🏠 ParcelPy Address Lookup", style="bold blue"))
         
-        print("🏠 ParcelPy Address Lookup")
-        print("=" * 50)
-        print(f"Searching for address: '{args.address}'")
-        print(f"Search type: {args.search_type}")
-        print(f"Fuzzy matching: {'No' if args.exact_match else 'Yes'}")
-        print(f"Buffer distance: {args.buffer_meters}m")
-        print(f"Max neighbors: {args.max_neighbors}")
+        # Display search parameters
+        params_table = Table(show_header=False, box=None)
+        params_table.add_column("Parameter", style="cyan", no_wrap=True)
+        params_table.add_column("Value", style="white")
         
-        # Initialize visualizer
-        viz = EnhancedParcelVisualizer(
-            output_dir=args.output_dir,
-            db_connection_string=args.database
-        )
+        params_table.add_row("Search Address:", f"'{args.address}'")
+        params_table.add_row("Search Type:", args.search_type)
+        params_table.add_row("Fuzzy Matching:", "No" if args.exact_match else "Yes")
+        params_table.add_row("Buffer Distance:", f"{args.buffer_meters}m")
+        params_table.add_row("Max Neighbors:", str(args.max_neighbors))
         
-        # Search for parcels by address
-        target_parcels = viz.search_parcels_by_address(
-            address=args.address,
-            search_type=args.search_type,
-            fuzzy_match=not args.exact_match
-        )
+        console.print(params_table)
+        console.print()
         
-        if target_parcels.empty:
-            print(f"\n❌ No parcels found for address: '{args.address}'")
-            print("\nTips for better results:")
-            print("  - Try using just the street number and name (e.g., '123 Main St')")
-            print("  - Use fuzzy matching (default) for partial matches") 
-            print("  - Try searching both site and mail addresses (default)")
-            return 1
-        
-        print(f"\n✅ Found {len(target_parcels)} matching parcel(s):")
-        
-        # Display found parcels
-        for idx, parcel in target_parcels.iterrows():
-            print(f"\n📍 Parcel {parcel.get('parno', 'N/A')}:")
+        # Initialize the visualizer
+        with console.status("[bold green]Initializing database connection...") as status:
+            visualizer = EnhancedParcelVisualizer(
+                output_dir=args.output_dir,
+                db_connection_string=args.database
+            )
+            status.update("[bold green]Searching for parcels...")
             
-            site_addr = parcel.get('site_address', '')
-            if site_addr and site_addr.strip():
-                print(f"   Property: {site_addr}")
-                site_city = parcel.get('site_city', '')
-                site_state = parcel.get('site_state', '') 
-                site_zip = parcel.get('site_zip', '')
-                if site_city or site_state or site_zip:
-                    print(f"            {site_city} {site_state} {site_zip}".strip())
+            # Search for parcels
+            parcels = visualizer.search_parcels_by_address(
+                address=args.address,
+                search_type=args.search_type,
+                fuzzy_match=not args.exact_match
+            )
+        
+        if parcels.empty:
+            console.print(f"❌ [bold red]No parcels found for address: '{args.address}'[/bold red]")
+            console.print("\n💡 [yellow]Tips for better results:[/yellow]")
+            console.print("  • Try using just the street number and name")
+            console.print("  • Use fuzzy matching (default) for partial matches") 
+            console.print("  • Try searching both site and mail addresses (default)")
+            return
+        
+        # Display results in a nice table
+        results_table = Table(title=f"🎯 Found {len(parcels)} Parcel(s)")
+        results_table.add_column("Parcel ID", style="cyan", no_wrap=True)
+        results_table.add_column("Site Address", style="green")
+        results_table.add_column("Owner", style="yellow")
+        results_table.add_column("Property Type", style="magenta")
+        results_table.add_column("Assessed Value", style="blue", justify="right")
+        results_table.add_column("Acres", style="red", justify="right")
+        
+        for _, parcel in parcels.iterrows():
+            value_str = f"${parcel['total_value']:,.0f}" if parcel['total_value'] else "N/A"
+            acres_str = f"{parcel['acres']:.2f}" if parcel['acres'] else "N/A"
             
-            owner = parcel.get('owner_name', '')
-            if owner and owner.strip():
-                print(f"   Owner:    {owner}")
+            # Truncate long addresses for better table display
+            site_address = str(parcel['site_address'] or "N/A")
+            if len(site_address) > 30:
+                site_address = site_address[:27] + "..."
             
-            value = parcel.get('total_value', '')
-            if value and str(value).strip() and str(value) != 'nan':
-                try:
-                    val = float(value)
-                    print(f"   Value:    ${val:,.0f}")
-                except:
-                    print(f"   Value:    {value}")
+            owner_name = str(parcel['owner_name'] or "N/A")
+            if len(owner_name) > 25:
+                owner_name = owner_name[:22] + "..."
+            
+            results_table.add_row(
+                str(parcel['parno']),
+                site_address,
+                owner_name,
+                str(parcel['property_type'] or "N/A"),
+                value_str,
+                acres_str
+            )
+        
+        console.print(results_table)
+        console.print()
         
         # Create neighborhood map
-        print(f"\n🗺️  Creating neighborhood map...")
+        with console.status("[bold blue]Creating interactive neighborhood map...") as status:
+            map_path = visualizer.create_neighborhood_map_from_address(
+                address=args.address,
+                search_type=args.search_type,
+                exact_match=args.exact_match,
+                buffer_meters=args.buffer_meters,
+                max_neighbors=args.max_neighbors
+            )
         
-        map_path = viz.create_neighborhood_map_from_address(
-            address=args.address,
-            search_type=args.search_type,
-            buffer_meters=args.buffer_meters,
-            max_neighbors=args.max_neighbors,
-            fuzzy_match=not args.exact_match
+        # Success message
+        console.print("✅ [bold green]Neighborhood map created successfully![/bold green]")
+        console.print(f"📁 [blue]Map saved to:[/blue] {map_path}")
+        console.print(f"🌐 [blue]Open in browser:[/blue] file://{Path(map_path).absolute()}")
+        
+        # Map features info
+        features_panel = Panel(
+            "🎯 [red]Target parcels[/red] are highlighted in red\n"
+            "🏠 [blue]Neighboring parcels[/blue] are shown in blue\n"
+            "🖱️  Click on parcels to see detailed information\n"
+            "📏 Use the measurement tool to measure distances\n"
+            "🔍 Toggle layers using the layer control",
+            title="Map Features",
+            style="dim"
         )
-        
-        if map_path:
-            print(f"✅ Neighborhood map created: {map_path}")
-            print(f"\n🌐 Open the map in your browser to explore the neighborhood!")
-            print(f"   Target parcels are highlighted in red")
-            print(f"   Neighboring parcels are shown in blue")
-            print(f"   Click on parcels to see detailed information")
-        else:
-            print("❌ Failed to create neighborhood map")
-            return 1
-        
-        return 0
+        console.print(features_panel)
         
     except Exception as e:
-        print(f"❌ Error: {e}")
+        console.print(f"❌ [bold red]Error: {e}[/bold red]")
         if args.verbose:
-            import traceback
-            traceback.print_exc()
-        return 1
+            console.print_exception()
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 

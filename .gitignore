@@ -107,3 +107,4 @@ data/external/
 temp/
 # Large data files
 *.sqlite*
+uv.lock

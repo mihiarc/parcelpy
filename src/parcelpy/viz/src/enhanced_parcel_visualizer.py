@@ -181,7 +181,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
     def plot_county_overview(self, 
                            county_fips: str,
                            table_name: str = "parcel",
-                           sample_size: int = 1000,
+                           sample_size: Optional[int] = None,
                            figsize: Tuple[int, int] = (15, 10)) -> str:
         """
         Create an overview plot for a specific county.
@@ -192,7 +192,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             County FIPS code
         table_name : str
             Name of the parcels table
-        sample_size : int
+        sample_size : Optional[int]
             Number of parcels to sample for plotting
         figsize : tuple
             Figure size
@@ -245,7 +245,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
                          bbox: Tuple[float, float, float, float],
                          table_name: str = "parcel",
                          attribute: Optional[str] = None,
-                         sample_size: int = 1000,
+                         sample_size: Optional[int] = None,
                          figsize: Tuple[int, int] = (15, 10),
                          cmap: str = 'viridis') -> str:
         """
@@ -259,7 +259,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             Name of the parcels table
         attribute : Optional[str]
             Attribute to use for coloring
-        sample_size : int
+        sample_size : Optional[int]
             Number of parcels to sample
         figsize : tuple
             Figure size
@@ -394,7 +394,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
                                       county_fips: Optional[str] = None,
                                       bbox: Optional[Tuple[float, float, float, float]] = None,
                                       attribute: Optional[str] = None,
-                                      sample_size: int = 500) -> str:
+                                      sample_size: Optional[int] = None) -> str:
         """
         Create an interactive map using data from database.
         
@@ -408,7 +408,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             Bounding box filter
         attribute : Optional[str]
             Attribute to use for coloring
-        sample_size : int
+        sample_size : Optional[int]
             Number of parcels to sample
             
         Returns:
@@ -601,10 +601,13 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             db_manager = self.db_loader.db_manager
         
         # First, search for the target parcels
-        target_parcels_df = self.search_parcels_by_address(address, search_type, exact_match)
+        target_parcels_df = self.search_parcels_by_address(address, search_type, not exact_match)
         
         if target_parcels_df.empty:
             raise ValueError(f"No parcels found for address: '{address}'")
+        
+        logger.info(f"Target parcels found: {len(target_parcels_df)}")
+        logger.info(f"Target parcels geometry info: valid={target_parcels_df.geometry.notna().sum()}, total={len(target_parcels_df)}")
         
         # Get the target parcel numbers for spatial query
         target_parnos = target_parcels_df['parno'].tolist()
@@ -646,7 +649,7 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
         LEFT JOIN property_info pi ON p.parno = pi.parno
         CROSS JOIN target_buffer tb
         WHERE ST_Intersects(ST_Transform(p.geometry, 3857), tb.buffer_geom)
-        ORDER BY parcel_type, oi.site_address
+        ORDER BY parcel_type DESC, oi.site_address
         LIMIT {max_neighbors + len(target_parnos)}
         """
         
@@ -658,6 +661,20 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             
             if all_parcels_gdf.empty:
                 raise ValueError("No parcels found in the spatial query")
+            
+            logger.info(f"Spatial query returned {len(all_parcels_gdf)} parcels")
+            target_count = len(all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'target'])
+            neighbor_count = len(all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'neighbor'])
+            logger.info(f"Breakdown: {target_count} target, {neighbor_count} neighbor parcels")
+            
+            # Filter out parcels with null or invalid geometries
+            logger.info(f"Initial parcels found: {len(all_parcels_gdf)}")
+            valid_geometry_mask = all_parcels_gdf.geometry.notna() & all_parcels_gdf.geometry.is_valid
+            all_parcels_gdf = all_parcels_gdf[valid_geometry_mask].copy()
+            logger.info(f"Parcels with valid geometries: {len(all_parcels_gdf)}")
+            
+            if all_parcels_gdf.empty:
+                raise ValueError("No parcels with valid geometries found")
             
             # Ensure proper CRS
             if all_parcels_gdf.crs is None:
@@ -671,8 +688,21 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             
             # Calculate map center from target parcels
             target_parcels_gdf = all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'target']
-            center_lat = target_parcels_gdf.geometry.centroid.y.mean()
-            center_lon = target_parcels_gdf.geometry.centroid.x.mean()
+            
+            if target_parcels_gdf.empty:
+                raise ValueError("No target parcels with valid geometries found")
+            
+            # Calculate centroids safely
+            target_centroids = target_parcels_gdf.geometry.centroid
+            valid_centroids = target_centroids.dropna()
+            
+            if valid_centroids.empty:
+                raise ValueError("Unable to calculate valid centroids for target parcels")
+            
+            center_lat = valid_centroids.y.mean()
+            center_lon = valid_centroids.x.mean()
+            
+            logger.info(f"Map center: ({center_lat:.6f}, {center_lon:.6f})")
             
             # Create base map
             m = folium.Map(
@@ -724,6 +754,9 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             # Add neighboring parcels (blue)
             neighbor_parcels_gdf = all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'neighbor']
             for idx, parcel in neighbor_parcels_gdf.iterrows():
+                total_value_str = f"${parcel['total_value']:,.2f}" if parcel['total_value'] else 'N/A'
+                acres_str = f"{parcel['acres']:.2f}" if parcel['acres'] else 'N/A'
+                
                 popup_html = f"""
                 <div style="font-family: Arial; max-width: 300px;">
                     <h4 style="color: blue; margin: 0;">🏠 NEIGHBOR PARCEL</h4>
@@ -734,8 +767,8 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
                     <b>Site Address:</b> {parcel['site_address'] or 'N/A'}<br>
                     <b>City:</b> {parcel['site_city'] or 'N/A'}<br>
                     <b>Mail Address:</b> {parcel['mail_address'] or 'N/A'}<br>
-                    <b>Total Value:</b> ${parcel['total_value']:,.2f if parcel['total_value'] else 'N/A'}<br>
-                    <b>Acres:</b> {parcel['acres']:.2f if parcel['acres'] else 'N/A'}
+                    <b>Total Value:</b> {total_value_str}<br>
+                    <b>Acres:</b> {acres_str}
                 </div>
                 """
                 

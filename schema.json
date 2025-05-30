@@ -8,7 +8,7 @@
       "unique_constraints": ["parno"],
       "columns": {
         "id": {"type": "SERIAL", "description": "Auto-incrementing primary key"},
-        "parno": {"type": "VARCHAR(20)", "description": "Primary parcel identifier", "nullable": false},
+        "parno": {"type": "VARCHAR(20)", "description": "Primary parcel identifier", "nullable": true},
         "county_fips": {"type": "VARCHAR(3)", "description": "County FIPS code"},
         "state_fips": {"type": "VARCHAR(2)", "description": "State FIPS code"},
         "geometry": {"type": "geometry(MultiPolygon,4326)", "description": "Parcel boundary geometry"},

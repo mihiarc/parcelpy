@@ -142,38 +142,40 @@ def process_county_data(gdf: gpd.GeoDataFrame) -> Tuple[List[Dict], List[Dict], 
         # Create property_info record
         prop_info = {
             'parno': parno,
-            'land_use_code': clean_data_value(row.get('land_use_code')),
-            'land_use_description': clean_data_value(row.get('land_use_description')),
-            'property_type': clean_data_value(row.get('property_use_description')),
-            'acres': clean_data_value(row.get('land_area')),
-            'square_feet': clean_data_value(row.get('building_area'))
+            'land_use_code': clean_data_value(row.get('parusecode')),
+            'land_use_description': clean_data_value(row.get('parusedesc')),
+            'property_type': clean_data_value(row.get('parusedesc')),
+            'acres': clean_data_value(row.get('gisacres')),
+            'square_feet': clean_data_value(row.get('recareano'))
         }
         property_info.append(prop_info)
         
         # Create property_values record
         prop_values = {
             'parno': parno,
-            'land_value': clean_data_value(row.get('land_value')),
-            'improvement_value': clean_data_value(row.get('building_value')),
-            'total_value': clean_data_value(row.get('total_value')),
-            'assessed_value': clean_data_value(row.get('assessed_value')),
-            'sale_date': clean_data_value(row.get('sale_date')),
-            'assessment_date': clean_data_value(row.get('deed_date'))
+            'land_value': clean_data_value(row.get('landval')),
+            'improvement_value': clean_data_value(row.get('improvval')),
+            'total_value': clean_data_value(row.get('parval')),
+            'assessed_value': clean_data_value(row.get('parval')),
+            'sale_date': clean_data_value(row.get('saledate')),
+            'assessment_date': clean_data_value(row.get('revisedate'))
         }
         property_values.append(prop_values)
         
         # Create owner_info record
         owner = {
             'parno': parno,
-            'owner_name': clean_data_value(row.get('owner_name')),
-            'mail_address': clean_data_value(row.get('mailing_address')),
-            'mail_city': clean_data_value(row.get('mailing_city')),
-            'mail_state': clean_data_value(row.get('mailing_state')),
-            'mail_zip': clean_data_value(row.get('mailing_zip')),
-            'site_address': clean_data_value(row.get('parcel_address')),
-            'site_city': clean_data_value(row.get('parcel_city')),
-            'site_state': 'NC',  # All parcels are in NC
-            'site_zip': clean_data_value(row.get('parcel_zip'))
+            'owner_name': clean_data_value(row.get('ownname')),
+            'owner_first': clean_data_value(row.get('ownfrst')),
+            'owner_last': clean_data_value(row.get('ownlast')),
+            'mail_address': clean_data_value(row.get('mailadd')),
+            'mail_city': clean_data_value(row.get('mcity')),
+            'mail_state': clean_data_value(row.get('mstate')),
+            'mail_zip': clean_data_value(row.get('mzip')),
+            'site_address': clean_data_value(row.get('siteadd')),
+            'site_city': clean_data_value(row.get('scity')),
+            'site_state': clean_data_value(row.get('sstate')),
+            'site_zip': clean_data_value(row.get('szip'))
         }
         owner_info.append(owner)
     

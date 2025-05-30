@@ -2,6 +2,7 @@
 """
 Set up normalized database schema for ParcelPy.
 This script creates a new normalized schema with separate tables for different types of parcel data.
+Aligned with schema.json and actual GeoJSON field structure.
 """
 
 import sys
@@ -29,22 +30,22 @@ def create_normalized_schema():
             except Exception as e:
                 print(f"Warning: Could not enable PostGIS: {e}")
             
-            # Drop existing tables if they exist
+            # Drop existing tables if they exist (note: using CASCADE to handle foreign keys)
             print("Dropping existing tables...")
             conn.execute(text("DROP TABLE IF EXISTS owner_info CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS property_values CASCADE;"))
             conn.execute(text("DROP TABLE IF EXISTS property_info CASCADE;"))
-            conn.execute(text("DROP TABLE IF EXISTS parcels CASCADE;"))
+            conn.execute(text("DROP TABLE IF EXISTS parcel CASCADE;"))  # Changed from 'parcels' to 'parcel'
             
-            # Create core parcels table
-            print("Creating parcels table...")
+            # Create core parcel table (matches schema.json)
+            print("Creating parcel table...")
             conn.execute(text("""
-                CREATE TABLE parcels (
+                CREATE TABLE parcel (
                     id SERIAL,
                     parno VARCHAR(20) NOT NULL,
-                    state_fips VARCHAR(2),
                     county_fips VARCHAR(3),
-                    geometry geometry(Geometry, 4326),
+                    state_fips VARCHAR(2),
+                    geometry geometry(MultiPolygon, 4326),
                     centroid geometry(Point, 4326),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -68,7 +69,7 @@ def create_normalized_schema():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (id),
                     UNIQUE (parno),
-                    FOREIGN KEY (parno) REFERENCES parcels(parno) ON DELETE CASCADE
+                    FOREIGN KEY (parno) REFERENCES parcel(parno) ON DELETE CASCADE
                 );
             """))
             
@@ -88,7 +89,7 @@ def create_normalized_schema():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (id),
                     UNIQUE (parno),
-                    FOREIGN KEY (parno) REFERENCES parcels(parno) ON DELETE CASCADE
+                    FOREIGN KEY (parno) REFERENCES parcel(parno) ON DELETE CASCADE
                 );
             """))
             
@@ -114,16 +115,16 @@ def create_normalized_schema():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (id),
                     UNIQUE (parno),
-                    FOREIGN KEY (parno) REFERENCES parcels(parno) ON DELETE CASCADE
+                    FOREIGN KEY (parno) REFERENCES parcel(parno) ON DELETE CASCADE
                 );
             """))
             
-            # Create indexes
+            # Create indexes (updated table names)
             print("Creating indexes...")
-            conn.execute(text("CREATE INDEX idx_parcels_state_fips ON parcels(state_fips);"))
-            conn.execute(text("CREATE INDEX idx_parcels_county_fips ON parcels(county_fips);"))
-            conn.execute(text("CREATE INDEX idx_parcels_geometry ON parcels USING GIST(geometry);"))
-            conn.execute(text("CREATE INDEX idx_parcels_centroid ON parcels USING GIST(centroid);"))
+            conn.execute(text("CREATE INDEX idx_parcel_state_fips ON parcel(state_fips);"))
+            conn.execute(text("CREATE INDEX idx_parcel_county_fips ON parcel(county_fips);"))
+            conn.execute(text("CREATE INDEX idx_parcel_geometry ON parcel USING GIST(geometry);"))
+            conn.execute(text("CREATE INDEX idx_parcel_centroid ON parcel USING GIST(centroid);"))
             
             conn.execute(text("CREATE INDEX idx_property_info_land_use ON property_info(land_use_code);"))
             conn.execute(text("CREATE INDEX idx_property_info_property_type ON property_info(property_type);"))
@@ -133,10 +134,12 @@ def create_normalized_schema():
             
             conn.execute(text("CREATE INDEX idx_owner_info_owner_name ON owner_info(owner_name);"))
             conn.execute(text("CREATE INDEX idx_owner_info_site_zip ON owner_info(site_zip);"))
+            conn.execute(text("CREATE INDEX idx_owner_info_site_address ON owner_info(site_address);"))
+            conn.execute(text("CREATE INDEX idx_owner_info_mail_address ON owner_info(mail_address);"))
             
             print("\n✅ Schema creation completed successfully!")
             print("\nTables created:")
-            print("  - parcels (core table)")
+            print("  - parcel (core table)")
             print("  - property_info")
             print("  - property_values")
             print("  - owner_info")
@@ -148,7 +151,29 @@ def create_normalized_schema():
             print("  - Property types")
             print("  - Sale and assessment dates")
             print("  - Owner names")
+            print("  - Site and mail addresses")
             print("  - ZIP codes")
+            
+            print("\nField mappings from GeoJSON:")
+            print("  - parno -> parcel.parno")
+            print("  - cntyfips -> parcel.county_fips")
+            print("  - stfips -> parcel.state_fips")
+            print("  - ownname -> owner_info.owner_name")
+            print("  - ownfrst -> owner_info.owner_first")
+            print("  - ownlast -> owner_info.owner_last")
+            print("  - mailadd -> owner_info.mail_address")
+            print("  - mcity -> owner_info.mail_city")
+            print("  - mstate -> owner_info.mail_state")
+            print("  - mzip -> owner_info.mail_zip")
+            print("  - siteadd -> owner_info.site_address")
+            print("  - scity -> owner_info.site_city")
+            print("  - szip -> owner_info.site_zip")
+            print("  - landval -> property_values.land_value")
+            print("  - improvval -> property_values.improvement_value")
+            print("  - parval -> property_values.total_value")
+            print("  - gisacres -> property_info.acres")
+            print("  - parusecode -> property_info.land_use_code")
+            print("  - parusedesc -> property_info.land_use_description")
             
         except Exception as e:
             print(f"\n❌ Error creating schema: {e}")

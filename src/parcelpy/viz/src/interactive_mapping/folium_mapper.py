@@ -76,19 +76,9 @@ class FoliumMapper:
                 results = results.set_index('parcel_id')
         
         # Make sure parcel_id is a column in parcels
-        parcel_id_col = None
-        if 'PARENTPIN' in parcels.columns:
-            parcel_id_col = 'PARENTPIN'
-        elif 'PIN' in parcels.columns:
-            parcel_id_col = 'PIN'
-        elif 'PARCEL_ID' in parcels.columns:
-            parcel_id_col = 'PARCEL_ID'
-        elif 'parcel_id' in parcels.columns:
-            parcel_id_col = 'parcel_id'
-        
-        if not parcel_id_col:
-            logger.warning("No parcel ID column found in parcels")
-            return None
+        parcel_id_col = 'parno'
+        if 'parno' not in parcels.columns:
+            raise ValueError("Required column 'parno' not found in parcels data. Ensure data is loaded from PostgreSQL database.")
             
         # Convert to WGS84 for Folium
         parcels = parcels.to_crs(epsg=4326)

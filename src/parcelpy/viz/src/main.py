@@ -15,7 +15,7 @@ Key Components:
 
 2. ParcelAnalysisPipeline Class
    - Manages the full analysis workflow
-   - Handles data loading, processing, and output generation
+   - Handles data loading from files or PostgreSQL database
    - Configurable parameters for parallel processing
 
 3. Command Line Interface
@@ -23,19 +23,21 @@ Key Components:
    - Provides options for customizing analysis
 
 4. Data Flow
-   - Input: Parcel data (Parquet) and land use data (GeoTIFF)
+   - Input: Parcel data (Parquet/PostgreSQL) and land use data (GeoTIFF)
    - Processing: Parallel computation of land use statistics
    - Output: Analysis results and visualizations
 
 5. Features
    - Efficient parallel processing
+   - PostgreSQL/PostGIS database integration
    - Progress tracking
    - Error handling
    - Result validation
    - Visualization generation
 
 6. Dependencies
-   - data_loader: Handles data import and preprocessing
+   - data_loader: Handles file-based data import and preprocessing
+   - database_integration: Handles PostgreSQL database operations
    - parallel_processing: Manages parallel computation
    - core.parcel_stats: Computes parcel statistics
    - visualization: Creates result visualizations
@@ -48,7 +50,7 @@ from pathlib import Path
 import time
 import warnings
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 import asyncio
 from datetime import datetime
 
@@ -89,6 +91,7 @@ import pandas as pd
 
 # Import other modules after setting up PROJ environment
 from src.data_loader import DataLoader
+from src.database_integration import DatabaseDataLoader, DataBridge
 from src.parallel_processing import ParallelProcessor
 from src.core.parcel_stats import summarize_parcel_stats
 from src.visualization import ParcelPlotter, ReportGenerator
@@ -103,19 +106,21 @@ logger = logging.getLogger(__name__)
 class ParcelAnalysisPipeline:
     def __init__(
         self,
-        parcel_file: str,
+        parcel_source: Union[str, Dict[str, Any]],
         raster_file: str,
         output_dir: str = "reports",
         max_workers: Optional[int] = None,
-        chunk_size: int = 5000
+        chunk_size: int = 5000,
+        db_connection_string: Optional[str] = None,
+        data_dir: str = "data"
     ):
         """
         Initialize the parcel analysis pipeline.
         
         Parameters:
         -----------
-        parcel_file : str
-            Path to the parcel data file (Parquet format)
+        parcel_source : Union[str, Dict[str, Any]]
+            Either a file path (str) or database query parameters (dict)
         raster_file : str
             Path to the land use raster file (GeoTIFF format)
         output_dir : str
@@ -124,8 +129,12 @@ class ParcelAnalysisPipeline:
             Maximum number of worker processes (None = use CPU count - 1)
         chunk_size : int
             Number of parcels to process in each chunk
+        db_connection_string : Optional[str]
+            PostgreSQL connection string for database operations
+        data_dir : str
+            Directory for file-based data (fallback)
         """
-        self.parcel_file = parcel_file
+        self.parcel_source = parcel_source
         self.raster_file = raster_file
         self.output_dir = Path(output_dir)
         self.max_workers = max_workers
@@ -134,8 +143,17 @@ class ParcelAnalysisPipeline:
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize components
-        self.loader = DataLoader(data_dir="")  # Use empty data_dir to avoid path prepending
+        # Initialize data bridge for unified data access
+        self.data_bridge = DataBridge(
+            db_connection_string=db_connection_string,
+            data_dir=data_dir,
+            prefer_database=db_connection_string is not None
+        )
+        
+        # Initialize legacy file loader for raster data
+        self.file_loader = DataLoader(data_dir=data_dir)
+        
+        # Initialize parallel processor
         self.processor = ParallelProcessor(
             chunk_size=chunk_size,
             max_workers=max_workers
@@ -144,18 +162,27 @@ class ParcelAnalysisPipeline:
         # Data containers
         self.parcels = None
         self.land_use = None
+        
+        # Determine data source type
+        self.is_database_source = isinstance(parcel_source, dict)
+        
+        logger.info(f"Pipeline initialized with {'database' if self.is_database_source else 'file'} source")
     
     def load_data(self) -> None:
         """Load parcel and land use data."""
-        logger.info("Loading parcel data from %s", self.parcel_file)
-        self.parcels = self.loader.load_parcel_data(
-            self.parcel_file,
-            use_dask=False  # No longer using Dask
-        )
+        # Load parcel data from either database or file
+        if self.is_database_source:
+            logger.info("Loading parcel data from PostgreSQL database")
+            logger.info(f"Query parameters: {self.parcel_source}")
+        else:
+            logger.info("Loading parcel data from file: %s", self.parcel_source)
+        
+        self.parcels = self.data_bridge.load_parcel_data(self.parcel_source)
         logger.info("Loaded %d parcels", len(self.parcels))
         
+        # Load land use data (always from file for now)
         logger.info("Loading land use data from %s", self.raster_file)
-        self.land_use = self.loader.load_land_use_data(
+        self.land_use = self.file_loader.load_land_use_data(
             self.raster_file,
             parcels=self.parcels,
             cache_key="full_dataset"
@@ -167,13 +194,16 @@ class ParcelAnalysisPipeline:
         start_time = time.time()
         
         try:
-            # Convert relative path to full path
-            full_raster_path = str(self.loader.data_dir / self.raster_file)
+            # Convert relative path to full path for raster file
+            if Path(self.raster_file).is_absolute():
+                full_raster_path = str(self.raster_file)
+            else:
+                full_raster_path = str(self.file_loader.data_dir / self.raster_file)
             
             stats = self.processor.process_parcels(
                 self.parcels,
-                full_raster_path,  # Use full path
-                self.loader.land_use_codes
+                full_raster_path,
+                self.file_loader.land_use_codes
             )
             
             elapsed = time.time() - start_time
@@ -226,7 +256,7 @@ class ParcelAnalysisPipeline:
         logger.info("\nGenerating visualizations...")
         
         # Reload the parcels with geometries for plotting
-        parcel_gdf = self.loader.load_parcel_data(self.parcel_file)
+        parcel_gdf = self.data_bridge.load_parcel_data(self.parcel_source)
         
         # Define the CRS for area calculations
         AREA_CALC_CRS = "EPSG:5070"  # NAD83 / Conus Albers
@@ -307,7 +337,7 @@ class ParcelAnalysisPipeline:
             try:
                 # Extract data info for the report
                 data_info = {
-                    "parcel_file": self.parcel_file,
+                    "parcel_source": self.parcel_source,
                     "raster_file": self.raster_file,
                     "date_generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
@@ -359,9 +389,9 @@ def main():
         description="Process parcels to determine land use composition."
     )
     parser.add_argument(
-        "--parcel-file",
+        "--parcel-source",
         default="data/parcels/ITAS_parcels_albers.parquet",
-        help="Path to parcel data file (Parquet format)"
+        help="Path to parcel data file (Parquet format) or PostgreSQL query parameters (dict)"
     )
     parser.add_argument(
         "--raster-file",
@@ -402,7 +432,7 @@ def main():
     
     # Initialize and run pipeline
     pipeline = ParcelAnalysisPipeline(
-        parcel_file=args.parcel_file,
+        parcel_source=args.parcel_source,
         raster_file=args.raster_file,
         output_dir=args.output_dir,
         max_workers=args.max_workers,

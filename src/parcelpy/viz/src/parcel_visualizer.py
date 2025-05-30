@@ -349,13 +349,12 @@ class ParcelVisualizer:
         if attribute and attribute in plot_parcels.columns:
             essential_cols.append(attribute)
         
-        # Add parcel ID if available
-        parcel_id_col = None
-        for col_name in ['parno', 'PARCEL_ID', 'parcel_id', 'PIN', 'pin']:
-            if col_name in plot_parcels.columns:
-                parcel_id_col = col_name
-                essential_cols.append(col_name)
-                break
+        # Add parcel ID - only support parno for PostgreSQL schema
+        if 'parno' in plot_parcels.columns:
+            essential_cols.append('parno')
+            parcel_id_col = 'parno'
+        else:
+            raise ValueError("Required column 'parno' not found in parcels data. Ensure data is loaded from PostgreSQL database.")
         
         # Create a clean dataset with only essential columns
         clean_parcels = plot_parcels[essential_cols].copy()
@@ -889,14 +888,12 @@ class ParcelVisualizer:
         if parcel_attribute and parcel_attribute in plot_parcels.columns:
             essential_cols.append(parcel_attribute)
         
-        # Add parcel ID if available
-        parcel_id_col = None
-        for col_name in ['parno', 'PARCEL_ID', 'parcel_id', 'PIN', 'pin']:
-            if col_name in plot_parcels.columns:
-                parcel_id_col = col_name
-                essential_cols.append(col_name)
-                break
-        
+        # Add parcel ID - only support parno for PostgreSQL schema
+        if 'parno' in plot_parcels.columns:
+            essential_cols.append('parno')
+            parcel_id_col = 'parno'
+        else:
+            raise ValueError("Required column 'parno' not found in parcels data. Ensure data is loaded from PostgreSQL database.")         
         clean_parcels = plot_parcels[essential_cols].copy()
         
         # Convert datetime columns to strings

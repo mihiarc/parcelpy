@@ -72,26 +72,20 @@ class DataLoader:
 
     def load_parcel_data(
         self,
-        parcel_file: str,
-        use_dask: bool = False,  # Kept for backward compatibility
-        partition_size: int = 100000  # Kept for backward compatibility
+        parcel_file: str
     ) -> gpd.GeoDataFrame:
         """
-        Load parcel data from a parquet file.
+        Load parcel data from a file (PostgreSQL export format expected).
         
         Parameters:
         -----------
         parcel_file : str
-            Path to the parcel parquet file
-        use_dask : bool
-            Deprecated parameter, kept for backward compatibility
-        partition_size : int
-            Deprecated parameter, kept for backward compatibility
+            Path to the parcel data file (Parquet format with PostgreSQL schema)
             
         Returns:
         --------
-        geopandas.GeoDataFrame
-            Parcel data with geometry and PARENTPIN as index
+        gpd.GeoDataFrame
+            Parcel data with geometry and parno as index
         """
         try:
             file_path = self.data_dir / parcel_file
@@ -125,25 +119,12 @@ class DataLoader:
                 # Convert from square meters to acres (1 sq meter = 0.000247105 acres)
                 parcels['Acres'] = parcels_area.geometry.area * 0.000247105
             
-            # Use PARENTPIN as the index (or find an alternative ID column)
-            if "PARENTPIN" not in parcels.columns:
-                # Try alternative column names that might contain parcel IDs
-                possible_id_columns = ["PIN", "PRCL_NBR", "PARCEL_ID", "ID", "FID", "OBJECTID", "PID"]
-                
-                # Find the first matching column
-                id_column = next((col for col in possible_id_columns if col in parcels.columns), None)
-                
-                if id_column:
-                    # Clone the existing ID column as PARENTPIN
-                    logger.info(f"Using '{id_column}' column as parcel identifier")
-                    parcels["PARENTPIN"] = parcels[id_column].astype(str)
-                else:
-                    # Create a sequential PARENTPIN column if no ID column is found
-                    logger.warning("No parcel identifier column found. Creating sequential identifiers.")
-                    parcels["PARENTPIN"] = [f"PARCEL_{i}" for i in range(len(parcels))]
+            # Use parno as the index (PostgreSQL schema requirement)
+            if "parno" not in parcels.columns:
+                raise ValueError("Required column 'parno' not found in parcels data. Ensure data is loaded from PostgreSQL database with correct schema.")
             
-            # Set PARENTPIN as index
-            parcels = parcels.set_index("PARENTPIN")
+            # Set parno as index
+            parcels = parcels.set_index("parno")
             
             # Validate geometries
             invalid_geoms = ~parcels.geometry.is_valid

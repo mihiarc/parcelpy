@@ -98,7 +98,7 @@ class ConfigManager:
 # Create a global config instance
 config = ConfigManager()
 
-# Provide direct access to land use colors and labels for backward compatibility
+# Direct access to land use colors and labels
 LAND_USE_COLORS = config.get(LAND_USE_COLORS_KEY, {})
 LAND_USE_LABELS = config.get(LAND_USE_LABELS_KEY, {})
 

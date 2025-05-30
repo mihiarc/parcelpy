@@ -509,25 +509,29 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
             Parcels matching the address search
         """
         if not self.db_loader:
-            raise ValueError("Database loader not available")
+            # Create DatabaseManager directly if no db_loader exists
+            from parcelpy.database.core.database_manager import DatabaseManager
+            db_manager = DatabaseManager()
+        else:
+            db_manager = self.db_loader.db_manager
         
         # Clean and prepare the address for searching
         clean_address = address.strip().upper()
+        
+        # Prepare address pattern for matching
+        if fuzzy_match:
+            address_pattern = f"%{clean_address}%"
+        else:
+            address_pattern = clean_address
         
         # Build the WHERE conditions based on search type
         where_conditions = []
         
         if search_type in ["site", "both"]:
-            if fuzzy_match:
-                where_conditions.append(f"UPPER(oi.site_address) LIKE '%{clean_address}%'")
-            else:
-                where_conditions.append(f"UPPER(oi.site_address) = '{clean_address}'")
+            where_conditions.append("UPPER(oi.site_address) LIKE :address_pattern")
         
         if search_type in ["mail", "both"]:
-            if fuzzy_match:
-                where_conditions.append(f"UPPER(oi.mail_address) LIKE '%{clean_address}%'")
-            else:
-                where_conditions.append(f"UPPER(oi.mail_address) = '{clean_address}'")
+            where_conditions.append("UPPER(oi.mail_address) LIKE :address_pattern")
         
         # Join condition using parno
         where_clause = f"({' OR '.join(where_conditions)})"
@@ -561,311 +565,235 @@ class EnhancedParcelVisualizer(ParcelVisualizer):
         logger.debug(f"Query: {query}")
         
         try:
-            result = self.db_loader.db_manager.execute_spatial_query(query)
+            result = db_manager.execute_spatial_query(query, {"address_pattern": address_pattern})
             logger.info(f"Found {len(result)} parcels matching address search")
             return result
         except Exception as e:
             logger.error(f"Error searching by address: {e}")
             raise
     
-    def create_neighborhood_map_from_address(self, 
+    def create_neighborhood_map_from_address(self,
                                            address: str,
                                            search_type: str = "both",
+                                           exact_match: bool = False,
                                            buffer_meters: float = 500,
                                            max_neighbors: int = 50,
-                                           fuzzy_match: bool = True) -> str:
+                                           output_filename: Optional[str] = None) -> str:
         """
-        Create an interactive neighborhood map centered on parcels found by address search.
+        Create an interactive neighborhood map from an address search.
         
-        Parameters:
-        -----------
-        address : str
-            Address to search for
-        search_type : str
-            Type of address to search: "site", "mail", or "both"
-        buffer_meters : float
-            Buffer distance in meters around found parcels to include neighbors
-        max_neighbors : int
-            Maximum number of neighboring parcels to include
-        fuzzy_match : bool
-            Whether to use fuzzy matching for address search
+        Args:
+            address: Address to search for
+            search_type: Type of search ("site", "mail", or "both")
+            exact_match: Whether to use exact matching instead of fuzzy matching
+            buffer_meters: Buffer distance around target parcels in meters
+            max_neighbors: Maximum number of neighboring parcels to include
+            output_filename: Optional filename for the map (will auto-generate if None)
             
         Returns:
-        --------
-        str
-            Path to saved HTML map, or None if no parcels found
+            str: Path to the generated HTML map file
         """
-        # Search for parcels by address
-        target_parcels = self.search_parcels_by_address(
-            address=address,
-            search_type=search_type,
-            fuzzy_match=fuzzy_match
-        )
-        
-        if target_parcels.empty:
-            logger.warning(f"No parcels found for address: {address}")
-            return None
-        
-        logger.info(f"Found {len(target_parcels)} target parcels, creating neighborhood map")
-        
-        # Get the bounding box of target parcels with buffer
-        target_bounds = target_parcels.total_bounds
-        
-        # Convert buffer from meters to degrees (rough approximation)
-        # At latitude ~35°N (North Carolina), 1 degree ≈ 111 km
-        buffer_degrees = buffer_meters / 111000
-        
-        # Expand bounds by buffer
-        bbox = (
-            target_bounds[0] - buffer_degrees,  # minx
-            target_bounds[1] - buffer_degrees,  # miny
-            target_bounds[2] + buffer_degrees,  # maxx
-            target_bounds[3] + buffer_degrees   # maxy
-        )
-        
-        # Load neighboring parcels within the buffer area
-        neighbor_parcels = self.load_parcels_from_database(
-            table_name="""parcel p 
-                          LEFT JOIN owner_info oi ON p.parno = oi.parno
-                          LEFT JOIN property_values pv ON p.parno = pv.parno
-                          LEFT JOIN property_info pi ON p.parno = pi.parno""",
-            bbox=bbox,
-            sample_size=max_neighbors,
-            attributes=[
-                "p.parno", "p.geometry", 
-                "oi.site_address", "oi.owner_name",
-                "pv.total_value", "pi.property_type", "pi.acres"
-            ]
-        )
-        
-        # Create the interactive map using Folium
-        from .interactive_mapping.folium_mapper import FoliumMapper
-        
-        mapper = FoliumMapper(output_dir=self.output_dir / "interactive_maps")
-        
-        # Prepare data for mapping - combine target and neighbor parcels
-        all_parcels = neighbor_parcels.copy()
-        
-        # Mark target parcels for special styling
-        all_parcels['is_target'] = False
-        for idx, target_parcel in target_parcels.iterrows():
-            mask = all_parcels['parno'] == target_parcel['parno']
-            all_parcels.loc[mask, 'is_target'] = True
-        
-        # Create map with custom styling for target parcels
-        map_obj = self._create_neighborhood_folium_map(
-            all_parcels=all_parcels,
-            target_parcels=target_parcels,
-            address=address,
-            mapper=mapper
-        )
-        
-        # Save the map
-        safe_address = "".join(c for c in address if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_address = safe_address.replace(' ', '_')[:50]  # Limit filename length
-        output_file = f"neighborhood_map_{safe_address}.html"
-        output_path = self.output_dir / "interactive_maps" / output_file
-        
-        map_obj.save(str(output_path))
-        logger.info(f"Saved neighborhood map to: {output_path}")
-        
-        return str(output_path)
-    
-    def _create_neighborhood_folium_map(self, 
-                                      all_parcels: gpd.GeoDataFrame,
-                                      target_parcels: gpd.GeoDataFrame,
-                                      address: str,
-                                      mapper) -> 'folium.Map':
-        """
-        Create a customized Folium map for neighborhood exploration.
-        
-        Parameters:
-        -----------
-        all_parcels : gpd.GeoDataFrame
-            All parcels including neighbors and targets
-        target_parcels : gpd.GeoDataFrame
-            The specific parcels found by address search
-        address : str
-            Original search address
-        mapper : FoliumMapper
-            Folium mapper instance
-            
-        Returns:
-        --------
-        folium.Map
-            Configured Folium map
-        """
-        import folium
-        from folium import plugins
-        
-        # Ensure WGS84 for Folium
-        if all_parcels.crs != "EPSG:4326":
-            all_parcels = all_parcels.to_crs("EPSG:4326")
-        if target_parcels.crs != "EPSG:4326":
-            target_parcels = target_parcels.to_crs("EPSG:4326")
-        
-        # Calculate center point from target parcels
-        target_bounds = target_parcels.total_bounds
-        center_lat = (target_bounds[1] + target_bounds[3]) / 2
-        center_lon = (target_bounds[0] + target_bounds[2]) / 2
-        
-        # Create map
-        m = folium.Map(
-            location=[center_lat, center_lon],
-            zoom_start=16,  # Closer zoom for neighborhood view
-            tiles='OpenStreetMap'
-        )
-        
-        # Add title
-        title_html = f'''
-            <h3 align="center" style="font-size:16px"><b>Neighborhood Map - Address: {address}</b></h3>
-            <p align="center" style="font-size:12px">Target parcels highlighted in red, neighbors in blue</p>
-        '''
-        m.get_root().html.add_child(folium.Element(title_html))
-        
-        # Add neighboring parcels (non-targets) first
-        neighbor_layer = folium.FeatureGroup(name='Neighboring Parcels')
-        neighbors = all_parcels[~all_parcels.get('is_target', False)]
-        
-        for idx, row in neighbors.iterrows():
-            popup_html = self._create_parcel_popup_html(row, is_target=False)
-            
-            folium.GeoJson(
-                row['geometry'],
-                style_function=lambda x: {
-                    'fillColor': 'lightblue',
-                    'color': 'darkblue',
-                    'weight': 1,
-                    'fillOpacity': 0.6,
-                },
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=folium.Tooltip(f"Parcel: {row.get('parno', 'N/A')}")
-            ).add_to(neighbor_layer)
-        
-        neighbor_layer.add_to(m)
-        
-        # Add target parcels with special styling
-        target_layer = folium.FeatureGroup(name='Target Parcels')
-        
-        for idx, row in target_parcels.iterrows():
-            popup_html = self._create_parcel_popup_html(row, is_target=True)
-            
-            folium.GeoJson(
-                row['geometry'],
-                style_function=lambda x: {
-                    'fillColor': 'red',
-                    'color': 'darkred',
-                    'weight': 3,
-                    'fillOpacity': 0.8,
-                },
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=folium.Tooltip(f"TARGET: {row.get('site_address', 'N/A')}")
-            ).add_to(target_layer)
-        
-        target_layer.add_to(m)
-        
-        # Add layer control
-        folium.LayerControl().add_to(m)
-        
-        # Add fullscreen option
-        plugins.Fullscreen().add_to(m)
-        
-        # Add measure tool
-        plugins.MeasureControl(
-            position='topright',
-            primary_length_unit='meters',
-            secondary_length_unit='feet',
-            primary_area_unit='sqmeters',
-            secondary_area_unit='acres'
-        ).add_to(m)
-        
-        # Add a marker at the center of target parcels
-        folium.Marker(
-            [center_lat, center_lon],
-            popup=f"Search Center: {address}",
-            icon=folium.Icon(color='green', icon='home')
-        ).add_to(m)
-        
-        return m
-    
-    def _create_parcel_popup_html(self, row: pd.Series, is_target: bool = False) -> str:
-        """
-        Create HTML content for parcel popups in neighborhood maps.
-        
-        Parameters:
-        -----------
-        row : pd.Series
-            Parcel data row
-        is_target : bool
-            Whether this is a target parcel from the search
-            
-        Returns:
-        --------
-        str
-            HTML content for popup
-        """
-        parno = row.get('parno', 'N/A')
-        
-        # Header styling based on whether it's a target
-        if is_target:
-            header = f"<h4 style='color: red;'>🎯 TARGET PARCEL</h4>"
+        if not self.db_loader:
+            # Create DatabaseManager directly if no db_loader exists
+            from parcelpy.database.core.database_manager import DatabaseManager
+            db_manager = DatabaseManager()
         else:
-            header = f"<h4 style='color: blue;'>Neighboring Parcel</h4>"
+            db_manager = self.db_loader.db_manager
         
-        html = f"""
-        <div style='width: 250px;'>
-            {header}
-            <p><b>Parcel ID:</b> {parno}</p>
+        # First, search for the target parcels
+        target_parcels_df = self.search_parcels_by_address(address, search_type, exact_match)
+        
+        if target_parcels_df.empty:
+            raise ValueError(f"No parcels found for address: '{address}'")
+        
+        # Get the target parcel numbers for spatial query
+        target_parnos = target_parcels_df['parno'].tolist()
+        parno_list = "','".join(map(str, target_parnos))
+        
+        # Build spatial query to find neighboring parcels
+        spatial_query = f"""
+        WITH target_parcels AS (
+            SELECT p.geometry, p.parno
+            FROM parcel p
+            WHERE p.parno IN ('{parno_list}')
+        ),
+        target_buffer AS (
+            SELECT ST_Union(ST_Buffer(ST_Transform(geometry, 3857), {buffer_meters})) as buffer_geom
+            FROM target_parcels
+        )
+        SELECT 
+            p.parno,
+            p.geometry,
+            oi.site_address,
+            oi.site_city,
+            oi.site_state,
+            oi.site_zip,
+            oi.mail_address,
+            oi.mail_city,
+            oi.mail_state,
+            oi.mail_zip,
+            oi.owner_name,
+            pv.total_value,
+            pi.property_type,
+            pi.acres,
+            CASE 
+                WHEN p.parno IN ('{parno_list}') THEN 'target'
+                ELSE 'neighbor'
+            END as parcel_type
+        FROM parcel p
+        JOIN owner_info oi ON p.parno = oi.parno
+        LEFT JOIN property_values pv ON p.parno = pv.parno
+        LEFT JOIN property_info pi ON p.parno = pi.parno
+        CROSS JOIN target_buffer tb
+        WHERE ST_Intersects(ST_Transform(p.geometry, 3857), tb.buffer_geom)
+        ORDER BY parcel_type, oi.site_address
+        LIMIT {max_neighbors + len(target_parnos)}
         """
         
-        # Add address information
-        site_address = row.get('site_address', '')
-        if site_address and site_address.strip():
-            html += f"<p><b>Property Address:</b><br>{site_address}"
-            site_city = row.get('site_city', '')
-            site_state = row.get('site_state', '')
-            site_zip = row.get('site_zip', '')
-            if site_city or site_state or site_zip:
-                html += f"<br>{site_city} {site_state} {site_zip}".strip()
-            html += "</p>"
+        logger.info(f"Finding neighbors within {buffer_meters}m of target parcels")
         
-        # Add owner information
-        owner_name = row.get('owner_name', '')
-        if owner_name and owner_name.strip():
-            html += f"<p><b>Owner:</b> {owner_name}</p>"
-        
-        # Add property details
-        property_type = row.get('property_type', '')
-        if property_type and property_type.strip():
-            html += f"<p><b>Property Type:</b> {property_type}</p>"
-        
-        acres = row.get('acres', '')
-        if acres and str(acres).strip() and str(acres) != 'nan':
-            try:
-                acres_val = float(acres)
-                html += f"<p><b>Size:</b> {acres_val:.2f} acres</p>"
-            except:
-                html += f"<p><b>Size:</b> {acres} acres</p>"
-        
-        total_value = row.get('total_value', '')
-        if total_value and str(total_value).strip() and str(total_value) != 'nan':
-            try:
-                value = float(total_value)
-                html += f"<p><b>Assessed Value:</b> ${value:,.0f}</p>"
-            except:
-                html += f"<p><b>Assessed Value:</b> {total_value}</p>"
-        
-        # Add mailing address if different from site address and this is a target
-        if is_target:
-            mail_address = row.get('mail_address', '')
-            if mail_address and mail_address.strip() and mail_address != site_address:
-                html += f"<p><b>Mailing Address:</b><br>{mail_address}"
-                mail_city = row.get('mail_city', '')
-                mail_state = row.get('mail_state', '')
-                mail_zip = row.get('mail_zip', '')
-                if mail_city or mail_state or mail_zip:
-                    html += f"<br>{mail_city} {mail_state} {mail_zip}".strip()
-                html += "</p>"
-        
-        html += "</div>"
-        return html 
+        try:
+            # Execute spatial query to get all parcels (target + neighbors)
+            all_parcels_gdf = db_manager.execute_spatial_query(spatial_query)
+            
+            if all_parcels_gdf.empty:
+                raise ValueError("No parcels found in the spatial query")
+            
+            # Ensure proper CRS
+            if all_parcels_gdf.crs is None:
+                all_parcels_gdf = all_parcels_gdf.set_crs('EPSG:4326')
+            elif all_parcels_gdf.crs.to_epsg() != 4326:
+                all_parcels_gdf = all_parcels_gdf.to_crs('EPSG:4326')
+            
+            # Create the interactive map
+            import folium
+            from folium import plugins
+            
+            # Calculate map center from target parcels
+            target_parcels_gdf = all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'target']
+            center_lat = target_parcels_gdf.geometry.centroid.y.mean()
+            center_lon = target_parcels_gdf.geometry.centroid.x.mean()
+            
+            # Create base map
+            m = folium.Map(
+                location=[center_lat, center_lon],
+                zoom_start=16,
+                tiles='OpenStreetMap'
+            )
+            
+            # Add additional tile layers
+            folium.TileLayer('CartoDB positron').add_to(m)
+            folium.TileLayer('CartoDB dark_matter').add_to(m)
+            
+            # Create feature groups for different parcel types
+            target_group = folium.FeatureGroup(name="Target Parcels", show=True)
+            neighbor_group = folium.FeatureGroup(name="Neighboring Parcels", show=True)
+            
+            # Add target parcels (red)
+            for idx, parcel in target_parcels_gdf.iterrows():
+                total_value_str = f"${parcel['total_value']:,.2f}" if parcel['total_value'] else 'N/A'
+                acres_str = f"{parcel['acres']:.2f}" if parcel['acres'] else 'N/A'
+                
+                popup_html = f"""
+                <div style="font-family: Arial; max-width: 300px;">
+                    <h4 style="color: red; margin: 0;">🎯 TARGET PARCEL</h4>
+                    <hr style="margin: 5px 0;">
+                    <b>Parcel ID:</b> {parcel['parno']}<br>
+                    <b>Owner:</b> {parcel['owner_name'] or 'N/A'}<br>
+                    <b>Property Type:</b> {parcel['property_type'] or 'N/A'}<br>
+                    <b>Site Address:</b> {parcel['site_address'] or 'N/A'}<br>
+                    <b>City:</b> {parcel['site_city'] or 'N/A'}<br>
+                    <b>Mail Address:</b> {parcel['mail_address'] or 'N/A'}<br>
+                    <b>Total Value:</b> {total_value_str}<br>
+                    <b>Acres:</b> {acres_str}
+                </div>
+                """
+                
+                folium.GeoJson(
+                    parcel.geometry.__geo_interface__,
+                    style_function=lambda x: {
+                        'fillColor': 'red',
+                        'color': 'darkred',
+                        'weight': 3,
+                        'fillOpacity': 0.7
+                    },
+                    popup=folium.Popup(popup_html, max_width=300),
+                    tooltip=f"TARGET: {parcel['site_address'] or 'No address'}"
+                ).add_to(target_group)
+            
+            # Add neighboring parcels (blue)
+            neighbor_parcels_gdf = all_parcels_gdf[all_parcels_gdf['parcel_type'] == 'neighbor']
+            for idx, parcel in neighbor_parcels_gdf.iterrows():
+                popup_html = f"""
+                <div style="font-family: Arial; max-width: 300px;">
+                    <h4 style="color: blue; margin: 0;">🏠 NEIGHBOR PARCEL</h4>
+                    <hr style="margin: 5px 0;">
+                    <b>Parcel ID:</b> {parcel['parno']}<br>
+                    <b>Owner:</b> {parcel['owner_name'] or 'N/A'}<br>
+                    <b>Property Type:</b> {parcel['property_type'] or 'N/A'}<br>
+                    <b>Site Address:</b> {parcel['site_address'] or 'N/A'}<br>
+                    <b>City:</b> {parcel['site_city'] or 'N/A'}<br>
+                    <b>Mail Address:</b> {parcel['mail_address'] or 'N/A'}<br>
+                    <b>Total Value:</b> ${parcel['total_value']:,.2f if parcel['total_value'] else 'N/A'}<br>
+                    <b>Acres:</b> {parcel['acres']:.2f if parcel['acres'] else 'N/A'}
+                </div>
+                """
+                
+                folium.GeoJson(
+                    parcel.geometry.__geo_interface__,
+                    style_function=lambda x: {
+                        'fillColor': 'blue',
+                        'color': 'darkblue',
+                        'weight': 2,
+                        'fillOpacity': 0.5
+                    },
+                    popup=folium.Popup(popup_html, max_width=300),
+                    tooltip=f"NEIGHBOR: {parcel['site_address'] or 'No address'}"
+                ).add_to(neighbor_group)
+            
+            # Add feature groups to map
+            target_group.add_to(m)
+            neighbor_group.add_to(m)
+            
+            # Add layer control
+            folium.LayerControl().add_to(m)
+            
+            # Add search center marker
+            folium.Marker(
+                [center_lat, center_lon],
+                popup=f"Search Center<br>Address: {address}",
+                tooltip="Search Center",
+                icon=folium.Icon(color='green', icon='search')
+            ).add_to(m)
+            
+            # Add measurement tool
+            plugins.MeasureControl().add_to(m)
+            
+            # Add fullscreen button
+            plugins.Fullscreen().add_to(m)
+            
+            # Generate output filename
+            if output_filename is None:
+                # Clean address for filename
+                safe_address = "".join(c for c in address if c.isalnum() or c in (' ', '-', '_')).strip()
+                safe_address = safe_address.replace(' ', '_')
+                output_filename = f"neighborhood_map_{safe_address}.html"
+            
+            # Ensure output directory exists
+            output_path = Path(self.output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Save map
+            map_file_path = output_path / output_filename
+            m.save(str(map_file_path))
+            
+            logger.info(f"Neighborhood map saved: {map_file_path}")
+            logger.info(f"Target parcels: {len(target_parcels_gdf)}")
+            logger.info(f"Neighboring parcels: {len(neighbor_parcels_gdf)}")
+            logger.info(f"Total parcels on map: {len(all_parcels_gdf)}")
+            
+            return str(map_file_path)
+            
+        except Exception as e:
+            logger.error(f"Error creating neighborhood map: {e}")
+            raise 

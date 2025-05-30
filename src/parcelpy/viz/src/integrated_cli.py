@@ -4,7 +4,7 @@
 Integrated CLI for ParcelPy Database-Viz Integration
 
 This CLI demonstrates the integration between the database and visualization modules,
-providing commands that can work with both database and file-based data sources.
+providing commands that can work with both PostgreSQL database and file-based data sources.
 """
 
 import argparse
@@ -12,11 +12,9 @@ import logging
 import sys
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, List
 
 # Import the enhanced visualizer and integration components
 from .enhanced_parcel_visualizer import EnhancedParcelVisualizer
-from .database_integration import DatabaseDataLoader, DataBridge
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +29,17 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 def cmd_list_tables(args) -> None:
-    """List available tables in the database."""
+    """List available tables in the PostgreSQL database."""
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         tables = visualizer.get_available_tables()
         
         if tables:
-            print(f"\nAvailable tables in database:")
+            print(f"\nAvailable tables in PostgreSQL database:")
             for i, table in enumerate(tables, 1):
                 print(f"  {i}. {table}")
         else:
@@ -57,7 +55,7 @@ def cmd_table_info(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         table_info = visualizer.get_table_info(args.table_name)
@@ -66,7 +64,7 @@ def cmd_table_info(args) -> None:
         print(f"Total columns: {len(table_info)}")
         print("\nColumns:")
         for _, row in table_info.iterrows():
-            print(f"  {row['column_name']}: {row['column_type']}")
+            print(f"  {row['column_name']}: {row['data_type']}")
             
     except Exception as e:
         logger.error(f"Failed to get table info: {e}")
@@ -78,7 +76,7 @@ def cmd_database_summary(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         report = visualizer.create_database_summary_report(args.table_name)
@@ -125,7 +123,7 @@ def cmd_plot_county(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         print(f"Creating county overview for FIPS: {args.county_fips}")
@@ -179,7 +177,7 @@ def cmd_plot_bbox(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         bbox = (args.minx, args.miny, args.maxx, args.maxy)
@@ -217,7 +215,7 @@ def cmd_export_data(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database
+            db_connection_string=args.database
         )
         
         # Parse bounding box if provided
@@ -257,7 +255,7 @@ def cmd_compare_sources(args) -> None:
     try:
         visualizer = EnhancedParcelVisualizer(
             output_dir=args.output_dir,
-            db_path=args.database,
+            db_connection_string=args.database,
             data_dir=args.data_dir
         )
         
@@ -295,6 +293,97 @@ def cmd_compare_sources(args) -> None:
         sys.exit(1)
 
 
+def cmd_address_lookup(args) -> None:
+    """Search for parcels by address and create neighborhood map."""
+    try:
+        visualizer = EnhancedParcelVisualizer(
+            output_dir=args.output_dir,
+            db_connection_string=args.database
+        )
+        
+        print(f"Searching for address: '{args.address}'")
+        print(f"Search type: {args.search_type}")
+        print(f"Fuzzy matching: {'No' if args.exact_match else 'Yes'}")
+        
+        # Search for parcels by address
+        target_parcels = visualizer.search_parcels_by_address(
+            address=args.address,
+            search_type=args.search_type,
+            fuzzy_match=not args.exact_match
+        )
+        
+        if target_parcels.empty:
+            print(f"❌ No parcels found for address: '{args.address}'")
+            print("\nTips for better results:")
+            print("  - Try using just the street number and name (e.g., '123 Main St')")
+            print("  - Use fuzzy matching (default) for partial matches")
+            print("  - Try searching both site and mail addresses (default)")
+            sys.exit(1)
+        
+        print(f"✅ Found {len(target_parcels)} matching parcel(s):")
+        
+        # Display found parcels
+        for idx, parcel in target_parcels.iterrows():
+            print(f"\n📍 Parcel {parcel.get('parno', 'N/A')}:")
+            
+            site_addr = parcel.get('site_address', '')
+            if site_addr and site_addr.strip():
+                print(f"   Property: {site_addr}")
+                site_city = parcel.get('site_city', '')
+                site_state = parcel.get('site_state', '')
+                site_zip = parcel.get('site_zip', '')
+                if site_city or site_state or site_zip:
+                    print(f"            {site_city} {site_state} {site_zip}".strip())
+            
+            mail_addr = parcel.get('mail_address', '')
+            if mail_addr and mail_addr.strip() and mail_addr != site_addr:
+                print(f"   Mailing:  {mail_addr}")
+                mail_city = parcel.get('mail_city', '')
+                mail_state = parcel.get('mail_state', '')
+                mail_zip = parcel.get('mail_zip', '')
+                if mail_city or mail_state or mail_zip:
+                    print(f"            {mail_city} {mail_state} {mail_zip}".strip())
+            
+            owner = parcel.get('owner_name', '')
+            if owner and owner.strip():
+                print(f"   Owner:    {owner}")
+            
+            value = parcel.get('total_value', '')
+            if value and str(value).strip() and str(value) != 'nan':
+                try:
+                    val = float(value)
+                    print(f"   Value:    ${val:,.0f}")
+                except:
+                    print(f"   Value:    {value}")
+        
+        # Create neighborhood map
+        print(f"\n🗺️  Creating neighborhood map...")
+        print(f"   Buffer distance: {args.buffer_meters}m")
+        print(f"   Max neighbors: {args.max_neighbors}")
+        
+        map_path = visualizer.create_neighborhood_map_from_address(
+            address=args.address,
+            search_type=args.search_type,
+            buffer_meters=args.buffer_meters,
+            max_neighbors=args.max_neighbors,
+            fuzzy_match=not args.exact_match
+        )
+        
+        if map_path:
+            print(f"✅ Neighborhood map created: {map_path}")
+            print(f"\n🌐 Open the map in your browser to explore the neighborhood!")
+            print(f"   Target parcels are highlighted in red")
+            print(f"   Neighboring parcels are shown in blue")
+            print(f"   Click on parcels to see detailed information")
+        else:
+            print("❌ Failed to create neighborhood map")
+            sys.exit(1)
+        
+    except Exception as e:
+        logger.error(f"Failed address lookup: {e}")
+        sys.exit(1)
+
+
 def main() -> None:
     """Main entry point for the integrated CLI."""
     parser = argparse.ArgumentParser(
@@ -303,25 +392,25 @@ def main() -> None:
         epilog="""
 Examples:
   # List available tables
-  python -m viz.src.integrated_cli list-tables --database parcels.duckdb
+  python -m viz.src.integrated_cli list-tables --database postgresql://user:password@localhost:5432/database
   
   # Get table information
-  python -m viz.src.integrated_cli table-info --database parcels.duckdb --table parcels
+  python -m viz.src.integrated_cli table-info --database postgresql://user:password@localhost:5432/database --table parcel
   
   # Generate database summary
-  python -m viz.src.integrated_cli db-summary --database parcels.duckdb --table parcels
+  python -m viz.src.integrated_cli db-summary --database postgresql://user:password@localhost:5432/database --table parcel
   
   # Plot county data
-  python -m viz.src.integrated_cli plot-county --database parcels.duckdb --county-fips 37183 --interactive
+  python -m viz.src.integrated_cli plot-county --database postgresql://user:password@localhost:5432/database --county-fips 37183 --interactive
   
   # Plot bounding box
-  python -m viz.src.integrated_cli plot-bbox --database parcels.duckdb --bbox -78.9,35.7,-78.8,35.8
+  python -m viz.src.integrated_cli plot-bbox --database postgresql://user:password@localhost:5432/database --bbox -78.9,35.7,-78.8,35.8
   
   # Export filtered data
-  python -m viz.src.integrated_cli export --database parcels.duckdb --county-fips 37183 --output county_data.parquet
+  python -m viz.src.integrated_cli export --database postgresql://user:password@localhost:5432/database --county-fips 37183 --output county_data.parquet
   
   # Compare file vs database
-  python -m viz.src.integrated_cli compare --database parcels.duckdb --file parcels.parquet
+  python -m viz.src.integrated_cli compare --database postgresql://user:password@localhost:5432/database --file parcels.parquet
         """
     )
     
@@ -337,7 +426,7 @@ Examples:
     )
     parser.add_argument(
         '--database',
-        help="Path to DuckDB database file"
+        help="PostgreSQL connection string"
     )
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
@@ -347,17 +436,17 @@ Examples:
     
     # Table info command
     info_parser = subparsers.add_parser('table-info', help='Get table schema information')
-    info_parser.add_argument('--table', dest='table_name', default='parcels', help='Table name')
+    info_parser.add_argument('--table', dest='table_name', default='parcel', help='Table name')
     
     # Database summary command
     summary_parser = subparsers.add_parser('db-summary', help='Generate database summary report')
-    summary_parser.add_argument('--table', dest='table_name', default='parcels', help='Table name')
+    summary_parser.add_argument('--table', dest='table_name', default='parcel', help='Table name')
     summary_parser.add_argument('--save-report', action='store_true', help='Save detailed report to JSON file')
     
     # Plot county command
     county_parser = subparsers.add_parser('plot-county', help='Create county visualizations')
     county_parser.add_argument('--county-fips', required=True, help='County FIPS code')
-    county_parser.add_argument('--table', dest='table_name', default='parcels', help='Table name')
+    county_parser.add_argument('--table', dest='table_name', default='parcel', help='Table name')
     county_parser.add_argument('--sample-size', type=int, default=1000, help='Sample size for plotting')
     county_parser.add_argument('--attribute', help='Attribute for choropleth coloring')
     county_parser.add_argument('--interactive', action='store_true', help='Create interactive map')
@@ -368,7 +457,7 @@ Examples:
     bbox_parser.add_argument('--miny', type=float, required=True, help='Minimum Y coordinate')
     bbox_parser.add_argument('--maxx', type=float, required=True, help='Maximum X coordinate')
     bbox_parser.add_argument('--maxy', type=float, required=True, help='Maximum Y coordinate')
-    bbox_parser.add_argument('--table', dest='table_name', default='parcels', help='Table name')
+    bbox_parser.add_argument('--table', dest='table_name', default='parcel', help='Table name')
     bbox_parser.add_argument('--sample-size', type=int, default=1000, help='Sample size for plotting')
     bbox_parser.add_argument('--attribute', help='Attribute for choropleth coloring')
     bbox_parser.add_argument('--interactive', action='store_true', help='Create interactive map')
@@ -376,7 +465,7 @@ Examples:
     # Export command
     export_parser = subparsers.add_parser('export', help='Export filtered data to file')
     export_parser.add_argument('--output-file', required=True, help='Output file path')
-    export_parser.add_argument('--table', dest='table_name', default='parcels', help='Table name')
+    export_parser.add_argument('--table', dest='table_name', default='parcel', help='Table name')
     export_parser.add_argument('--county-fips', help='County FIPS code filter')
     export_parser.add_argument('--bbox', help='Bounding box filter (minx,miny,maxx,maxy)')
     export_parser.add_argument('--attributes', help='Comma-separated list of attributes to export')
@@ -386,10 +475,24 @@ Examples:
     # Compare sources command
     compare_parser = subparsers.add_parser('compare', help='Compare file and database data sources')
     compare_parser.add_argument('--file', dest='file_path', required=True, help='File path to compare')
-    compare_parser.add_argument('--table', dest='table_name', default='parcels', help='Database table name')
+    compare_parser.add_argument('--table', dest='table_name', default='parcel', help='Database table name')
     compare_parser.add_argument('--data-dir', default='data', help='Data directory for file loading')
     compare_parser.add_argument('--sample-size', type=int, default=1000, help='Sample size for comparison')
     compare_parser.add_argument('--save-comparison', action='store_true', help='Save comparison to JSON file')
+    
+    # Address lookup command
+    address_parser = subparsers.add_parser('address-lookup', help='Search for parcels by address and create neighborhood map')
+    address_parser.add_argument('--database', required=True, help='Database connection string')
+    address_parser.add_argument('--address', required=True, help='Address to search for')
+    address_parser.add_argument('--search-type', default='both', choices=['site', 'mail', 'both'], 
+                               help='Type of address to search: site (property), mail (mailing), or both')
+    address_parser.add_argument('--buffer-meters', type=float, default=500, 
+                               help='Buffer distance in meters around target parcels (default: 500)')
+    address_parser.add_argument('--max-neighbors', type=int, default=50, 
+                               help='Maximum number of neighboring parcels to include (default: 50)')
+    address_parser.add_argument('--exact-match', action='store_true', 
+                               help='Use exact address matching instead of fuzzy matching')
+    address_parser.add_argument('--output-dir', default='output', help='Output directory for maps and reports')
     
     args = parser.parse_args()
     
@@ -403,7 +506,7 @@ Examples:
     
     # Check if database is required and provided
     if args.command != 'compare' and not args.database:
-        logger.error("Database path is required for this command. Use --database option.")
+        logger.error("Database connection string is required for this command. Use --database option.")
         sys.exit(1)
     
     # Create output directory
@@ -417,7 +520,8 @@ Examples:
         'plot-county': cmd_plot_county,
         'plot-bbox': cmd_plot_bbox,
         'export': cmd_export_data,
-        'compare': cmd_compare_sources
+        'compare': cmd_compare_sources,
+        'address-lookup': cmd_address_lookup
     }
     
     command_func = command_map.get(args.command)

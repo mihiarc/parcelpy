@@ -127,3 +127,8 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--cov=parcelpy --cov-report=html --cov-report=term-missing" 
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=6.1.1",
+]

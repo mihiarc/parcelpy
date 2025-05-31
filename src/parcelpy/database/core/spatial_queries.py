@@ -1,7 +1,8 @@
 """
-Spatial Queries module for ParcelPy DuckDB integration.
+Spatial Queries module for ParcelPy PostgreSQL integration.
 
-Provides specialized spatial analysis and query functions.
+This module provides spatial analysis capabilities using PostGIS
+for geospatial parcel data operations.
 """
 
 import logging

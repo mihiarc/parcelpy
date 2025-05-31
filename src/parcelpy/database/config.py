@@ -35,8 +35,8 @@ class DatabaseConfig:
     # PostgreSQL connection settings
     DEFAULT_HOST = os.getenv("PARCELPY_DB_HOST", "localhost")
     DEFAULT_PORT = int(os.getenv("PARCELPY_DB_PORT", "5432"))
-    DEFAULT_DATABASE = os.getenv("PARCELPY_DB_NAME", "parcelpy")
-    DEFAULT_USER = os.getenv("PARCELPY_DB_USER", "parcelpy")
+    DEFAULT_DATABASE = os.getenv("PARCELPY_DB_NAME", None)  # No default database
+    DEFAULT_USER = os.getenv("PARCELPY_DB_USER", "mihiarc")
     DEFAULT_PASSWORD = os.getenv("PARCELPY_DB_PASSWORD", "")
     DEFAULT_SCHEMA = os.getenv("PARCELPY_DB_SCHEMA", "public")
     

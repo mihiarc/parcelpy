@@ -2,14 +2,15 @@
 """
 Command-line interface for ParcelPy Database Module.
 
-Provides easy access to database operations from the command line.
+Provides CLI access to database operations including data ingestion,
+querying, and analysis using PostgreSQL with PostGIS.
 """
 
 import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from .core.database_manager import DatabaseManager
 from .core.parcel_db import ParcelDB
@@ -23,253 +24,211 @@ logger = logging.getLogger(__name__)
 
 
 def cmd_ingest(args):
-    """Ingest parcel data into the database."""
-    logger.info(f"Ingesting data from {args.input_path} into database {args.database}")
-    
-    parcel_db = ParcelDB(
-        db_path=args.database,
-        memory_limit=args.memory_limit,
-        threads=args.threads
-    )
-    
-    input_path = Path(args.input_path)
-    
-    if input_path.is_file():
-        # Single file ingestion
-        summary = parcel_db.ingest_parcel_file(
-            parquet_path=input_path,
-            table_name=args.table_name,
-            if_exists=args.if_exists
+    """Ingest parcel data from files into PostgreSQL database."""
+    try:
+        # Initialize database manager
+        db_manager = DatabaseManager(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
         )
-        logger.info(f"Ingested {summary['row_count']:,} rows into table '{summary['table_name']}'")
         
-    elif input_path.is_dir():
-        # Directory ingestion
-        data_ingestion = DataIngestion(parcel_db.db_manager)
+        # Initialize ParcelDB
+        parcel_db = ParcelDB(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
+        )
         
-        if args.nc_parts:
-            # Special handling for NC parcel parts
-            summary = data_ingestion.ingest_nc_parcel_parts(
-                data_dir=input_path,
-                table_name=args.table_name
+        input_path = Path(args.input)
+        
+        if input_path.is_file():
+            # Single file ingestion
+            print(f"Ingesting single file: {input_path}")
+            result = parcel_db.ingest_parcel_file(
+                input_path, 
+                table_name=args.table,
+                county_name=args.county,
+                if_exists=args.if_exists
             )
+            print(f"✓ Ingested {result['records_loaded']} records")
+            
+        elif input_path.is_dir():
+            # Directory ingestion
+            print(f"Ingesting directory: {input_path}")
+            pattern = args.pattern or "*.parquet"
+            files = list(input_path.glob(pattern))
+            
+            if not files:
+                print(f"No files found matching pattern: {pattern}")
+                return
+                
+            result = parcel_db.ingest_multiple_parcel_files(
+                files, 
+                table_name=args.table
+            )
+            print(f"✓ Ingested {result['total_records']} records from {len(files)} files")
+            
         else:
-            # General directory ingestion
-            summary = data_ingestion.ingest_directory(
-                data_dir=input_path,
-                pattern=args.pattern,
-                table_name=args.table_name,
-                max_workers=args.max_workers
-            )
-        
-        logger.info(f"Ingested {summary['total_rows']:,} rows from {summary['files_processed']} files")
-    else:
-        logger.error(f"Input path does not exist: {input_path}")
-        sys.exit(1)
+            print(f"Error: {input_path} is not a valid file or directory")
+            
+    except Exception as e:
+        print(f"Error during ingestion: {e}")
+        logger.error(f"Ingestion failed: {e}")
 
 
 def cmd_query(args):
-    """Execute a query against the database."""
-    logger.info(f"Executing query against database {args.database}")
-    
-    db_manager = DatabaseManager(
-        db_path=args.database,
-        memory_limit=args.memory_limit,
-        threads=args.threads
-    )
-    
-    if args.query_file:
-        # Read query from file
-        query_file = Path(args.query_file)
-        if not query_file.exists():
-            logger.error(f"Query file does not exist: {query_file}")
-            sys.exit(1)
-        
-        query = query_file.read_text()
-    else:
-        query = args.query
-    
-    if not query:
-        logger.error("No query provided. Use --query or --query-file")
-        sys.exit(1)
-    
+    """Execute SQL queries against the PostgreSQL database."""
     try:
-        if args.spatial:
-            result = db_manager.execute_spatial_query(query)
-        else:
-            result = db_manager.execute_query(query)
+        db_manager = DatabaseManager(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
+        )
         
-        if args.output:
-            # Save to file
-            output_path = Path(args.output)
-            if args.spatial and output_path.suffix.lower() in ['.geojson', '.shp']:
-                result.to_file(output_path)
-            else:
-                result.to_csv(output_path, index=False)
-            logger.info(f"Results saved to {output_path}")
-        else:
-            # Print to console
+        if args.query:
+            # Direct query
+            result = db_manager.execute_query(args.query)
             print(result.to_string(index=False))
             
+        elif args.file:
+            # Query from file
+            query_file = Path(args.file)
+            if not query_file.exists():
+                print(f"Error: Query file {query_file} not found")
+                return
+                
+            query = query_file.read_text()
+            result = db_manager.execute_query(query)
+            print(result.to_string(index=False))
+            
+        else:
+            print("Error: Either --query or --file must be specified")
+            
     except Exception as e:
+        print(f"Error executing query: {e}")
         logger.error(f"Query execution failed: {e}")
-        sys.exit(1)
 
 
 def cmd_stats(args):
-    """Get statistics about tables in the database."""
-    logger.info(f"Getting statistics for database {args.database}")
-    
-    parcel_db = ParcelDB(
-        db_path=args.database,
-        memory_limit=args.memory_limit,
-        threads=args.threads
-    )
-    
-    if args.table_name:
-        # Statistics for specific table
-        try:
-            stats = parcel_db.get_parcel_statistics(args.table_name)
+    """Display database and table statistics."""
+    try:
+        db_manager = DatabaseManager(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
+        )
+        
+        if args.table:
+            # Table-specific stats
+            parcel_db = ParcelDB(
+                host=args.host,
+                port=args.port,
+                database=args.database,
+                user=args.user,
+                password=args.password
+            )
             
-            print(f"\nStatistics for table '{args.table_name}':")
-            print(f"  Total parcels: {stats['total_parcels']:,}")
-            print(f"  Total columns: {stats['total_columns']}")
+            stats = parcel_db.get_parcel_statistics(args.table)
             
-            if 'area_statistics' in stats:
-                area_stats = stats['area_statistics']
-                print(f"  Area statistics:")
-                print(f"    Min: {area_stats['min_area']:.2f} acres")
-                print(f"    Max: {area_stats['max_area']:.2f} acres")
-                print(f"    Average: {area_stats['avg_area']:.2f} acres")
-                print(f"    Median: {area_stats['median_area']:.2f} acres")
-            
-            if 'county_distribution' in stats:
-                print(f"  Top counties by parcel count:")
-                for i, county_record in enumerate(stats['county_distribution'][:5]):
-                    # county_record is a dict with county name/code and parcel_count
-                    county_keys = [k for k in county_record.keys() if k != 'parcel_count']
-                    if county_keys:
-                        county_name = county_record[county_keys[0]]
-                        count = county_record['parcel_count']
-                        print(f"    {i+1}. {county_name}: {count:,} parcels")
+            print(f"Statistics for table: {args.table}")
+            print("=" * 40)
+            for key, value in stats.items():
+                if isinstance(value, float):
+                    print(f"{key}: {value:.2f}")
+                else:
+                    print(f"{key}: {value}")
                     
-        except Exception as e:
-            logger.error(f"Failed to get statistics for table {args.table_name}: {e}")
-            sys.exit(1)
-    else:
-        # General database statistics
-        try:
-            tables = parcel_db.db_manager.list_tables()
-            db_info = parcel_db.db_manager.get_database_size()
-            
-            print(f"\nDatabase: {args.database}")
-            print(f"Size: {db_info['size_mb']:.2f} MB")
-            print(f"Tables: {len(tables)}")
+        else:
+            # Database-wide stats
+            tables = db_manager.list_tables()
+            print("Database Tables:")
+            print("=" * 40)
             
             for table in tables:
-                try:
-                    count = parcel_db.db_manager.get_table_count(table)
-                    print(f"  {table}: {count:,} rows")
-                except:
-                    print(f"  {table}: (error getting count)")
-                    
-        except Exception as e:
-            logger.error(f"Failed to get database statistics: {e}")
-            sys.exit(1)
+                count = db_manager.get_table_count(table)
+                print(f"{table}: {count:,} records")
+                
+            # Database size
+            size_info = db_manager.get_database_size()
+            print(f"\nDatabase Size: {size_info['total_size']}")
+            
+    except Exception as e:
+        print(f"Error getting statistics: {e}")
+        logger.error(f"Statistics failed: {e}")
 
 
 def cmd_schema(args):
-    """Analyze and manage table schemas."""
-    logger.info(f"Schema operations for database {args.database}")
-    
-    db_manager = DatabaseManager(
-        db_path=args.database,
-        memory_limit=args.memory_limit,
-        threads=args.threads
-    )
-    
-    schema_mgr = SchemaManager(db_manager)
-    
-    if args.analyze:
-        # Analyze schema compliance
-        try:
-            analysis = schema_mgr.analyze_table_schema(args.table_name)
+    """Manage database schema operations."""
+    try:
+        db_manager = DatabaseManager(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
+        )
+        
+        schema_manager = SchemaManager(db_manager)
+        
+        if args.analyze:
+            # Analyze table schema
+            info = db_manager.get_table_info(args.table)
+            print(f"Schema for table: {args.table}")
+            print("=" * 50)
+            print(info.to_string(index=False))
             
-            print(f"\nSchema analysis for table '{args.table_name}':")
-            print(f"  Compliance score: {analysis['compliance_score']:.1f}%")
-            print(f"  Total columns: {analysis['total_columns']}")
-            print(f"  Matched columns: {analysis['matched_columns']}")
-            print(f"  Missing columns: {analysis['missing_columns']}")
-            print(f"  Extra columns: {analysis['extra_columns']}")
-            print(f"  Type mismatches: {analysis['type_mismatches']}")
+        elif args.standardize:
+            # Standardize table schema
+            print(f"Standardizing schema for table: {args.table}")
+            schema_manager.standardize_parcel_schema(args.table)
+            print("✓ Schema standardization completed")
             
-            if args.output:
-                # Save detailed analysis
-                import json
-                output_path = Path(args.output)
-                with open(output_path, 'w') as f:
-                    json.dump(analysis, f, indent=2, default=str)
-                logger.info(f"Detailed analysis saved to {output_path}")
-                
-        except Exception as e:
-            logger.error(f"Schema analysis failed: {e}")
-            sys.exit(1)
-    
-    elif args.standardize:
-        # Create standardized view
-        try:
-            view_name = args.view_name or f"{args.table_name}_standardized"
+        elif args.create:
+            # Create normalized schema
+            print("Creating normalized parcel schema...")
+            schema_manager.create_normalized_schema()
+            print("✓ Normalized schema created")
             
-            summary = schema_mgr.create_standardized_view(
-                source_table=args.table_name,
-                view_name=view_name
-            )
+        else:
+            print("Error: One of --analyze, --standardize, or --create must be specified")
             
-            print(f"\nCreated standardized view '{view_name}':")
-            print(f"  Source table: {summary['source_table']}")
-            print(f"  Row count: {summary['row_count']:,}")
-            print(f"  Columns mapped: {summary['columns_mapped']}")
-            print(f"  Standard columns: {summary['columns_standardized']}")
-            
-        except Exception as e:
-            logger.error(f"Failed to create standardized view: {e}")
-            sys.exit(1)
-    
-    elif args.export_mapping:
-        # Export schema mapping
-        try:
-            output_path = Path(args.output or f"{args.table_name}_mapping.json")
-            schema_mgr.export_schema_mapping(args.table_name, output_path)
-            logger.info(f"Schema mapping exported to {output_path}")
-            
-        except Exception as e:
-            logger.error(f"Failed to export schema mapping: {e}")
-            sys.exit(1)
+    except Exception as e:
+        print(f"Error with schema operation: {e}")
+        logger.error(f"Schema operation failed: {e}")
 
 
 def cmd_export(args):
-    """Export data from the database."""
-    logger.info(f"Exporting data from database {args.database}")
-    
-    parcel_db = ParcelDB(
-        db_path=args.database,
-        memory_limit=args.memory_limit,
-        threads=args.threads
-    )
-    
+    """Export data from PostgreSQL database to files."""
     try:
+        parcel_db = ParcelDB(
+            host=args.host,
+            port=args.port,
+            database=args.database,
+            user=args.user,
+            password=args.password
+        )
+        
+        print(f"Exporting table {args.table} to {args.output}")
         parcel_db.export_parcels(
-            output_path=args.output,
-            table_name=args.table_name,
+            args.output,
+            table_name=args.table,
             format=args.format,
             where_clause=args.where
         )
-        
-        logger.info(f"Data exported to {args.output}")
+        print("✓ Export completed")
         
     except Exception as e:
+        print(f"Error during export: {e}")
         logger.error(f"Export failed: {e}")
-        sys.exit(1)
 
 
 def main():
@@ -279,94 +238,97 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Ingest a single parquet file
-  python cli.py ingest data/parcels.parquet --database parcels.duckdb
+  # Ingest parcel data
+  python cli.py ingest data/parcels.parquet --host localhost --database parcels
   
-  # Ingest all parquet files from a directory
-  python cli.py ingest data/nc_parcels/ --database parcels.duckdb --pattern "*.parquet"
+  # Ingest multiple files
+  python cli.py ingest data/nc_parcels/ --host localhost --database parcels --pattern "*.parquet"
   
   # Get database statistics
-  python cli.py stats --database parcels.duckdb
+  python cli.py stats --host localhost --database parcels
   
-  # Get statistics for a specific table
-  python cli.py stats --database parcels.duckdb --table parcels
+  # Get table statistics
+  python cli.py stats --host localhost --database parcels --table parcels
   
-  # Analyze schema compliance
-  python cli.py schema --database parcels.duckdb --table parcels --analyze
+  # Analyze table schema
+  python cli.py schema --host localhost --database parcels --table parcels --analyze
   
-  # Create standardized view
-  python cli.py schema --database parcels.duckdb --table parcels --standardize
+  # Standardize schema
+  python cli.py schema --host localhost --database parcels --table parcels --standardize
   
-  # Execute a query
-  python cli.py query --database parcels.duckdb --query "SELECT COUNT(*) FROM parcels"
+  # Execute query
+  python cli.py query --host localhost --database parcels --query "SELECT COUNT(*) FROM parcels"
   
   # Export data
-  python cli.py export --database parcels.duckdb --table parcels --output parcels.parquet
+  python cli.py export --host localhost --database parcels --table parcels --output parcels.parquet
         """
     )
     
     # Global arguments
-    parser.add_argument('--database', '-d', required=True, help='Path to DuckDB database file')
-    parser.add_argument('--memory-limit', default='8GB', help='Memory limit for DuckDB (default: 8GB)')
-    parser.add_argument('--threads', type=int, default=4, help='Number of threads (default: 4)')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Verbose logging')
+    parser.add_argument('--host', default='localhost', help='PostgreSQL host (default: localhost)')
+    parser.add_argument('--port', type=int, default=5432, help='PostgreSQL port (default: 5432)')
+    parser.add_argument('--database', '-d', required=True, help='PostgreSQL database name')
+    parser.add_argument('--user', '-u', help='PostgreSQL user (default: from config)')
+    parser.add_argument('--password', '-p', help='PostgreSQL password (default: from config)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Ingest command
     ingest_parser = subparsers.add_parser('ingest', help='Ingest parcel data')
-    ingest_parser.add_argument('input_path', help='Path to parquet file or directory')
-    ingest_parser.add_argument('--table-name', default='parcels', help='Table name (default: parcels)')
-    ingest_parser.add_argument('--pattern', default='*.parquet', help='File pattern for directory ingestion')
-    ingest_parser.add_argument('--max-workers', type=int, default=4, help='Max parallel workers')
-    ingest_parser.add_argument('--if-exists', choices=['replace', 'append', 'fail'], default='replace')
-    ingest_parser.add_argument('--nc-parts', action='store_true', help='Special handling for NC parcel parts')
-    ingest_parser.set_defaults(func=cmd_ingest)
+    ingest_parser.add_argument('input', help='Input file or directory path')
+    ingest_parser.add_argument('--table', default='parcels', help='Target table name (default: parcels)')
+    ingest_parser.add_argument('--county', help='County name for the data')
+    ingest_parser.add_argument('--pattern', help='File pattern for directory ingestion (default: *.parquet)')
+    ingest_parser.add_argument('--if-exists', choices=['replace', 'append'], default='replace',
+                              help='What to do if table exists (default: replace)')
     
     # Query command
-    query_parser = subparsers.add_parser('query', help='Execute SQL query')
-    query_parser.add_argument('--query', help='SQL query string')
-    query_parser.add_argument('--query-file', help='File containing SQL query')
-    query_parser.add_argument('--spatial', action='store_true', help='Execute as spatial query')
-    query_parser.add_argument('--output', help='Output file for results')
-    query_parser.set_defaults(func=cmd_query)
+    query_parser = subparsers.add_parser('query', help='Execute SQL queries')
+    query_group = query_parser.add_mutually_exclusive_group(required=True)
+    query_group.add_argument('--query', '-q', help='SQL query string')
+    query_group.add_argument('--file', '-f', help='File containing SQL query')
     
     # Stats command
-    stats_parser = subparsers.add_parser('stats', help='Get database/table statistics')
-    stats_parser.add_argument('--table-name', help='Specific table to analyze')
-    stats_parser.set_defaults(func=cmd_stats)
+    stats_parser = subparsers.add_parser('stats', help='Display database statistics')
+    stats_parser.add_argument('--table', help='Show statistics for specific table')
     
     # Schema command
-    schema_parser = subparsers.add_parser('schema', help='Schema analysis and management')
-    schema_parser.add_argument('--table-name', required=True, help='Table name')
-    schema_parser.add_argument('--analyze', action='store_true', help='Analyze schema compliance')
-    schema_parser.add_argument('--standardize', action='store_true', help='Create standardized view')
-    schema_parser.add_argument('--export-mapping', action='store_true', help='Export schema mapping')
-    schema_parser.add_argument('--view-name', help='Name for standardized view')
-    schema_parser.add_argument('--output', help='Output file')
-    schema_parser.set_defaults(func=cmd_schema)
+    schema_parser = subparsers.add_parser('schema', help='Schema management operations')
+    schema_parser.add_argument('--table', help='Table name for schema operations')
+    schema_group = schema_parser.add_mutually_exclusive_group(required=True)
+    schema_group.add_argument('--analyze', action='store_true', help='Analyze table schema')
+    schema_group.add_argument('--standardize', action='store_true', help='Standardize table schema')
+    schema_group.add_argument('--create', action='store_true', help='Create normalized schema')
     
     # Export command
-    export_parser = subparsers.add_parser('export', help='Export data from database')
-    export_parser.add_argument('--table-name', required=True, help='Table to export')
+    export_parser = subparsers.add_parser('export', help='Export data to files')
+    export_parser.add_argument('--table', required=True, help='Table to export')
     export_parser.add_argument('--output', required=True, help='Output file path')
-    export_parser.add_argument('--format', choices=['parquet', 'csv', 'geojson', 'shapefile'], 
-                              default='parquet', help='Output format')
+    export_parser.add_argument('--format', choices=['parquet', 'csv', 'geojson'], default='parquet',
+                              help='Output format (default: parquet)')
     export_parser.add_argument('--where', help='WHERE clause for filtering')
-    export_parser.set_defaults(func=cmd_export)
     
     args = parser.parse_args()
     
     if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.basicConfig(level=logging.INFO)
     
     if not args.command:
         parser.print_help()
-        sys.exit(1)
+        return
     
-    # Execute the command
-    args.func(args)
+    # Execute command
+    command_map = {
+        'ingest': cmd_ingest,
+        'query': cmd_query,
+        'stats': cmd_stats,
+        'schema': cmd_schema,
+        'export': cmd_export
+    }
+    
+    command_map[args.command](args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main() 

@@ -9,6 +9,8 @@ from .core.database_manager import DatabaseManager
 from .core.parcel_db import ParcelDB
 from .core.spatial_queries import SpatialQueries
 from .core.census_integration import CensusIntegration
+from .core.market_analytics import MarketAnalytics
+from .core.risk_analytics import RiskAnalytics
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
 from .crs_manager import DatabaseCRSManager, database_crs_manager
@@ -20,6 +22,8 @@ __all__ = [
     "ParcelDB", 
     "SpatialQueries",
     "CensusIntegration",
+    "MarketAnalytics",
+    "RiskAnalytics",
     "DataIngestion",
     "SchemaManager",
     "DatabaseCRSManager",

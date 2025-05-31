@@ -1,7 +1,8 @@
 """
-Schema Manager for ParcelPy DuckDB integration.
+Schema Manager for ParcelPy PostgreSQL integration.
 
-Handles database schema operations, standardization, and migrations.
+This module provides utilities for managing and standardizing parcel data schemas
+across different data sources using PostgreSQL with PostGIS.
 """
 
 import logging

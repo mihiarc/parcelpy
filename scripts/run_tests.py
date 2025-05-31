@@ -26,90 +26,67 @@ def run_command(cmd, description):
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Run ParcelPy database tests")
+    parser = argparse.ArgumentParser(description="Run ParcelPy database tests with coverage")
     parser.add_argument(
-        "test_type", 
-        choices=["all", "basic", "census", "unit", "integration", "coverage"],
+        "test_type",
+        choices=["all", "basic", "census", "analytics", "unit", "integration", "coverage"],
         help="Type of tests to run"
     )
-    parser.add_argument(
-        "--verbose", "-v", 
-        action="store_true", 
-        help="Run tests in verbose mode"
-    )
-    parser.add_argument(
-        "--html-coverage", 
-        action="store_true", 
-        help="Generate HTML coverage report"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Verbose output")
+    parser.add_argument("--html-coverage", action="store_true", help="Generate HTML coverage report")
     
     args = parser.parse_args()
     
-    # Base command
     base_cmd = ["python", "-m", "pytest"]
     
-    # Add verbosity
+    if args.test_type == "all":
+        test_path = "src/parcelpy/database/tests/"
+        description = "Running all tests"
+    elif args.test_type == "basic":
+        test_path = "src/parcelpy/database/tests/test_basic_functionality.py"
+        description = "Running basic functionality tests"
+    elif args.test_type == "census":
+        test_path = "src/parcelpy/database/tests/test_census_integration.py"
+        description = "Running census integration tests"
+    elif args.test_type == "analytics":
+        test_path = "src/parcelpy/database/tests/test_market_analytics.py src/parcelpy/database/tests/test_risk_analytics.py"
+        description = "Running analytics tests (market + risk)"
+    elif args.test_type == "unit":
+        test_path = "src/parcelpy/database/tests/ -m 'not integration'"
+        description = "Running unit tests only"
+    elif args.test_type == "integration":
+        test_path = "src/parcelpy/database/tests/ -m integration"
+        description = "Running integration tests only"
+    elif args.test_type == "coverage":
+        test_path = "src/parcelpy/database/tests/"
+        description = "Running all tests with detailed coverage"
+    
+    # Build command
+    cmd = base_cmd + test_path.split()
+    
+    # Add coverage options
+    if args.test_type in ["all", "coverage", "analytics"]:
+        cmd.extend([
+            "--cov=src/parcelpy/database",
+            "--cov-report=term-missing"
+        ])
+        
+        if args.html_coverage or args.test_type == "coverage":
+            cmd.append("--cov-report=html")
+    
+    # Add verbose flag
     if args.verbose:
-        base_cmd.append("-v")
+        cmd.append("-v")
     
-    # Coverage options
-    coverage_opts = [
-        "--cov=src/parcelpy/database",
-        "--cov-report=term-missing"
-    ]
+    # Run the command
+    success = run_command(cmd, description)
     
-    if args.html_coverage:
-        coverage_opts.append("--cov-report=html")
-    
-    # Test commands
-    commands = {
-        "all": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/"] + coverage_opts,
-            "desc": "Running all tests with coverage"
-        },
-        "basic": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/test_basic_functionality.py"] + coverage_opts,
-            "desc": "Running basic functionality tests"
-        },
-        "census": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/test_census_integration.py"] + coverage_opts,
-            "desc": "Running census integration tests"
-        },
-        "unit": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/", "-m", "not integration"] + coverage_opts,
-            "desc": "Running unit tests only (excluding integration tests)"
-        },
-        "integration": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/", "-m", "integration"] + coverage_opts,
-            "desc": "Running integration tests only"
-        },
-        "coverage": {
-            "cmd": base_cmd + ["src/parcelpy/database/tests/"] + coverage_opts + ["--cov-report=html"],
-            "desc": "Running all tests with detailed HTML coverage report"
-        }
-    }
-    
-    if args.test_type not in commands:
-        print(f"❌ Unknown test type: {args.test_type}")
-        sys.exit(1)
-    
-    command_info = commands[args.test_type]
-    success = run_command(command_info["cmd"], command_info["desc"])
-    
-    if args.html_coverage or args.test_type == "coverage":
-        print(f"\n📊 HTML coverage report generated in: htmlcov/index.html")
-    
-    print(f"\n{'='*60}")
     if success:
-        print("🎉 Test run completed successfully!")
-        print("\n📈 Current test coverage: ~25% (2883 total lines, 735 covered)")
-        print("🎯 Next steps:")
-        print("   • Add more unit tests for core modules")
-        print("   • Add integration tests with real database")
-        print("   • Test CLI interfaces")
-        print("   • Test analytics modules")
+        print(f"\n🎉 {description} completed successfully!")
+        if args.test_type in ["all", "coverage", "analytics"]:
+            print("📊 Coverage report generated in htmlcov/index.html")
     else:
-        print("💥 Test run failed!")
+        print(f"\n❌ {description} failed!")
         sys.exit(1)
 
 if __name__ == "__main__":

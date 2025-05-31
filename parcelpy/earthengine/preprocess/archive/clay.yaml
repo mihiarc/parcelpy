@@ -1,0 +1,67 @@
+# Clay County, North Carolina Configuration
+
+county_code: "CLAY"
+state: "NC"
+fips_code: "37043"
+
+# PID processing settings
+process_pids: true
+pid_field: "PIN_NUM"
+pid_format: "12-digit number (county-specific format)"
+standardize_pid: true
+standardized_pid_length: 12
+standardized_pid_prefix: "37043"
+
+# County-specific excluded fields
+excluded_fields:
+  - "OBJECTID"
+  - "GlobalID"
+  - "Shape"
+  - "Shape.STArea()"
+  - "Shape.STLength()"
+  - "ESRI_OID"
+  - "created_user"
+  - "created_date"
+  - "last_edited_user"
+  - "last_edited_date"
+
+# County-specific field overrides (adding or overriding patterns)
+field_overrides:
+  parcel_id:
+    patterns:
+      - "(?i)^(PIN_NUM|PINNUM|PIN|PARCEL_PIN)$"
+  
+  owner_name:
+    patterns:
+      - "(?i)^(OWNER|OWNER_NAME|OWNER_NAME_1)$"
+  
+  total_market_value:
+    patterns:
+      - "(?i)^(TOTAL_VALUE|TOTAL_VAL|TOT_VAL|ASSESSED_VALUE)$"
+  
+  land_value:
+    patterns:
+      - "(?i)^(LAND_VALUE|LAND_VAL|LAND_ASSESSED)$"
+  
+  building_value:
+    patterns:
+      - "(?i)^(BLDG_VALUE|BUILDING_VALUE|IMPROVEMENT_VALUE|IMP_VALUE)$"
+
+# Field combinations (for fields that need to be combined)
+combine_fields:
+  property_address:
+    fields:
+      - "ADDR_NUM"
+      - "PREFIX_DIR"
+      - "STREET_NAME"
+      - "STREET_TYPE"
+      - "SUFFIX_DIR"
+    separator: " "
+    null_handling: "skip"
+  
+  owner_address:
+    fields:
+      - "OWNER_ADDR1"
+      - "OWNER_ADDR2"
+    separator: ", "
+    null_handling: "skip" 

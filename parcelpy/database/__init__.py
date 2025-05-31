@@ -2,7 +2,7 @@
 ParcelPy Database Module
 
 Core database functionality including PostgreSQL/PostGIS operations,
-data ingestion, analytics, and county-level data loading.
+data ingestion, analytics, county-level data loading, and schema management.
 """
 
 from .core.database_manager import DatabaseManager
@@ -16,6 +16,8 @@ from .utils.schema_manager import SchemaManager
 from .crs_manager import DatabaseCRSManager, database_crs_manager
 from .config import get_connection_config, get_connection_url
 from .loaders.county_loader import CountyLoader, CountyLoadingConfig
+from .schema.normalized_schema import NormalizedSchema
+from .schema.validator import SchemaValidator
 
 __version__ = "0.1.0"
 __all__ = [
@@ -32,5 +34,7 @@ __all__ = [
     "get_connection_config",
     "get_connection_url",
     "CountyLoader",
-    "CountyLoadingConfig"
+    "CountyLoadingConfig",
+    "NormalizedSchema",
+    "SchemaValidator"
 ] 

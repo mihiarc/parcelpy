@@ -7,6 +7,7 @@ ParcelPy provides tools for:
 - Earth Engine integration for remote sensing analysis
 - Interactive web applications for data exploration
 - Address lookup and neighborhood analysis
+- Schema management and validation
 
 Modules:
     database: DuckDB-based database operations for parcel data
@@ -28,7 +29,9 @@ try:
         DataIngestion,
         SchemaManager,
         CountyLoader,
-        CountyLoadingConfig
+        CountyLoadingConfig,
+        NormalizedSchema,
+        SchemaValidator
     )
     __all__ = [
         "DatabaseManager",
@@ -37,7 +40,9 @@ try:
         "DataIngestion",
         "SchemaManager",
         "CountyLoader",
-        "CountyLoadingConfig"
+        "CountyLoadingConfig",
+        "NormalizedSchema",
+        "SchemaValidator"
     ]
 except ImportError:
     # Database module not available - this is OK for some use cases

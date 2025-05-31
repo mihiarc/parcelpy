@@ -18,6 +18,8 @@ from .core.spatial_queries import SpatialQueries
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
 from .loaders.county_loader import CountyLoader, CountyLoadingConfig
+from .schema.normalized_schema import NormalizedSchema
+from .schema.validator import SchemaValidator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -168,7 +170,7 @@ def cmd_stats(args):
 
 
 def cmd_schema(args):
-    """Manage database schema operations."""
+    """Manage database schema operations with enhanced functionality."""
     try:
         db_manager = DatabaseManager(
             host=args.host,
@@ -178,33 +180,178 @@ def cmd_schema(args):
             password=args.password
         )
         
-        schema_manager = SchemaManager(db_manager)
-        
-        if args.analyze:
-            # Analyze table schema
+        if args.create_normalized:
+            # Create normalized schema using new NormalizedSchema class
+            print("🔄 Creating normalized database schema...")
+            schema = NormalizedSchema(db_manager)
+            
+            success = schema.create_tables(drop_existing=args.drop_existing)
+            if success:
+                print("✅ Normalized schema created successfully!")
+                
+                # Show field mappings if requested
+                if args.show_mappings:
+                    mappings = schema.get_field_mappings()
+                    print("\n📋 Field mappings from GeoJSON:")
+                    for geojson_field, schema_field in mappings.items():
+                        print(f"  {geojson_field} → {schema_field}")
+            else:
+                print("❌ Failed to create normalized schema")
+                sys.exit(1)
+                
+        elif args.verify_normalized:
+            # Verify normalized schema
+            print("🔍 Verifying normalized schema...")
+            schema = NormalizedSchema(db_manager)
+            
+            verification = schema.verify_schema()
+            if verification['schema_exists']:
+                print("✅ Normalized schema verified successfully!")
+                print(f"Tables found: {len(verification['tables_found'])}")
+                print(f"Indexes found: {len(verification['indexes_found'])}")
+                print(f"PostGIS enabled: {verification['postgis_enabled']}")
+                
+                if verification.get('missing_tables'):
+                    print(f"⚠️ Missing tables: {', '.join(verification['missing_tables'])}")
+                if verification.get('missing_indexes'):
+                    print(f"⚠️ Missing indexes: {', '.join(verification['missing_indexes'])}")
+            else:
+                print("❌ Normalized schema verification failed")
+                if 'error' in verification:
+                    print(f"Error: {verification['error']}")
+                    
+        elif args.drop_normalized:
+            # Drop normalized schema
+            print("🗑️ Dropping normalized schema tables...")
+            schema = NormalizedSchema(db_manager)
+            
+            success = schema.drop_tables()
+            if success:
+                print("✅ Normalized schema tables dropped successfully!")
+            else:
+                print("❌ Failed to drop normalized schema tables")
+                sys.exit(1)
+                
+        elif args.validate_county_tables:
+            # Validate county tables compatibility
+            print("🔍 Analyzing county tables for schema compatibility...")
+            validator = SchemaValidator(db_manager)
+            
+            analysis = validator.analyze_county_tables()
+            if analysis['county_tables_found']:
+                summary = analysis['summary']
+                print(f"✅ Found {summary['total_tables']} county tables")
+                print(f"Total columns found: {summary['total_columns_found']}")
+                print(f"Compatible columns: {summary['compatible_columns']}")
+                print(f"Incompatible columns: {summary['incompatible_columns']}")
+                print(f"Missing columns: {summary['missing_columns']}")
+                
+                if args.verbose:
+                    print("\n📊 Detailed Analysis:")
+                    compatibility = analysis['schema_compatibility']
+                    
+                    if compatibility['compatible_columns']:
+                        print(f"\n✅ Compatible columns ({len(compatibility['compatible_columns'])}):")
+                        for col in sorted(compatibility['compatible_columns']):
+                            print(f"  {col}")
+                    
+                    if compatibility['incompatible_columns']:
+                        print(f"\n⚠️ Incompatible columns ({len(compatibility['incompatible_columns'])}):")
+                        for col in sorted(compatibility['incompatible_columns']):
+                            print(f"  {col}")
+                    
+                    if compatibility['missing_columns']:
+                        print(f"\n❌ Missing columns ({len(compatibility['missing_columns'])}):")
+                        for col in sorted(compatibility['missing_columns']):
+                            print(f"  {col}")
+            else:
+                print("❌ No county tables found to analyze")
+                
+        elif args.analyze_table:
+            # Analyze specific table
+            print(f"🔍 Analyzing table: {args.analyze_table}")
+            validator = SchemaValidator(db_manager)
+            
+            analysis = validator.get_column_analysis(args.analyze_table)
+            if 'error' not in analysis:
+                print(f"✅ Table analysis completed")
+                print(f"Total columns: {analysis['total_columns']}")
+                
+                if args.verbose:
+                    print("\n📊 Column Details:")
+                    for col_name, col_info in analysis['columns'].items():
+                        print(f"  {col_name}: {col_info['type']} {'(nullable)' if col_info['nullable'] else '(not null)'}")
+                        
+                    if analysis['value_ranges']:
+                        print("\n📈 Value Ranges:")
+                        for col_name, range_info in analysis['value_ranges'].items():
+                            if 'max_length' in range_info:
+                                print(f"  {col_name}: max length {range_info['max_length']}, {range_info['distinct_values']} distinct values")
+                            elif 'min_value' in range_info:
+                                print(f"  {col_name}: {range_info['min_value']} to {range_info['max_value']}, {range_info['distinct_values']} distinct values")
+            else:
+                print(f"❌ Error analyzing table: {analysis['error']}")
+                
+        elif args.check_data_quality:
+            # Check data quality for specific table
+            print(f"🔍 Checking data quality for table: {args.check_data_quality}")
+            validator = SchemaValidator(db_manager)
+            
+            quality = validator.check_data_quality(args.check_data_quality)
+            if 'error' not in quality:
+                print(f"✅ Data quality analysis completed")
+                print(f"Data quality score: {quality['data_quality_score']:.1f}/100")
+                
+                if args.verbose:
+                    stats = quality['basic_stats']
+                    print(f"\n📊 Basic Statistics:")
+                    print(f"  Total rows: {stats.get('row_count', 'N/A'):,}")
+                    print(f"  Total columns: {stats.get('column_count', 'N/A')}")
+                    
+                    if quality['duplicate_analysis']:
+                        dup = quality['duplicate_analysis']
+                        print(f"\n🔄 Duplicate Analysis:")
+                        print(f"  Duplicate rows: {dup.get('duplicate_rows', 0):,}")
+                        print(f"  Duplicate percentage: {dup.get('duplicate_percentage', 0):.2f}%")
+                    
+                    if quality['null_analysis'] and args.verbose:
+                        print(f"\n❓ Null Value Analysis (top 10):")
+                        null_cols = sorted(quality['null_analysis'].items(), 
+                                         key=lambda x: x[1]['null_percentage'], reverse=True)[:10]
+                        for col_name, null_info in null_cols:
+                            print(f"  {col_name}: {null_info['null_percentage']:.1f}% null")
+            else:
+                print(f"❌ Error checking data quality: {quality['error']}")
+                
+        elif args.analyze:
+            # Legacy analyze command for backward compatibility
             info = db_manager.get_table_info(args.table)
             print(f"Schema for table: {args.table}")
             print("=" * 50)
             print(info.to_string(index=False))
             
         elif args.standardize:
-            # Standardize table schema
+            # Legacy standardize command for backward compatibility
+            schema_manager = SchemaManager(db_manager)
             print(f"Standardizing schema for table: {args.table}")
             schema_manager.standardize_parcel_schema(args.table)
             print("✓ Schema standardization completed")
             
         elif args.create:
-            # Create normalized schema
+            # Legacy create command for backward compatibility
+            schema_manager = SchemaManager(db_manager)
             print("Creating normalized parcel schema...")
             schema_manager.create_normalized_schema()
             print("✓ Normalized schema created")
             
         else:
-            print("Error: One of --analyze, --standardize, or --create must be specified")
+            print("Error: Must specify one of the schema operation options")
+            print("Use --help to see available options")
             
     except Exception as e:
         print(f"Error with schema operation: {e}")
         logger.error(f"Schema operation failed: {e}")
+        sys.exit(1)
 
 
 def cmd_export(args):
@@ -319,20 +466,20 @@ Examples:
   # Load specific counties
   python cli.py load-counties --counties Wake Durham --host localhost --database parcels
   
-  # Dry run to see what would be loaded
-  python cli.py load-counties --dry-run --host localhost --database parcels
+  # Create normalized schema
+  python cli.py schema --create-normalized --host localhost --database parcels
   
-  # List already loaded counties
-  python cli.py load-counties --list-loaded --host localhost --database parcels
+  # Verify normalized schema
+  python cli.py schema --verify-normalized --host localhost --database parcels
   
-  # Check loading status
-  python cli.py load-counties --status --host localhost --database parcels
+  # Analyze county tables for compatibility
+  python cli.py schema --validate-county-tables --verbose --host localhost --database parcels
+  
+  # Check data quality
+  python cli.py schema --check-data-quality my_table --verbose --host localhost --database parcels
   
   # Get database statistics
   python cli.py stats --host localhost --database parcels
-  
-  # Export data
-  python cli.py export --host localhost --database parcels --table parcels --output parcels.parquet
         """
     )
     
@@ -383,13 +530,34 @@ Examples:
     stats_parser = subparsers.add_parser('stats', help='Display database statistics')
     stats_parser.add_argument('--table', help='Show statistics for specific table')
     
-    # Schema command
-    schema_parser = subparsers.add_parser('schema', help='Schema management operations')
-    schema_parser.add_argument('--table', help='Table name for schema operations')
-    schema_group = schema_parser.add_mutually_exclusive_group(required=True)
-    schema_group.add_argument('--analyze', action='store_true', help='Analyze table schema')
-    schema_group.add_argument('--standardize', action='store_true', help='Standardize table schema')
-    schema_group.add_argument('--create', action='store_true', help='Create normalized schema')
+    # Enhanced Schema command
+    schema_parser = subparsers.add_parser('schema', help='Enhanced schema management operations')
+    schema_parser.add_argument('--table', help='Table name for legacy schema operations')
+    
+    # New normalized schema operations
+    schema_parser.add_argument('--create-normalized', action='store_true',
+                              help='Create normalized parcel schema (4 tables)')
+    schema_parser.add_argument('--verify-normalized', action='store_true',
+                              help='Verify normalized schema exists and is complete')
+    schema_parser.add_argument('--drop-normalized', action='store_true',
+                              help='Drop normalized schema tables')
+    schema_parser.add_argument('--drop-existing', action='store_true',
+                              help='Drop existing tables before creating (use with --create-normalized)')
+    schema_parser.add_argument('--show-mappings', action='store_true',
+                              help='Show field mappings from GeoJSON to schema (use with --create-normalized)')
+    
+    # Schema validation operations
+    schema_parser.add_argument('--validate-county-tables', action='store_true',
+                              help='Analyze county tables for schema compatibility')
+    schema_parser.add_argument('--analyze-table', metavar='TABLE',
+                              help='Analyze column types and ranges for specific table')
+    schema_parser.add_argument('--check-data-quality', metavar='TABLE',
+                              help='Check data quality metrics for specific table')
+    
+    # Legacy schema operations (for backward compatibility)
+    schema_parser.add_argument('--analyze', action='store_true', help='Analyze table schema (legacy)')
+    schema_parser.add_argument('--standardize', action='store_true', help='Standardize table schema (legacy)')
+    schema_parser.add_argument('--create', action='store_true', help='Create normalized schema (legacy)')
     
     # Export command
     export_parser = subparsers.add_parser('export', help='Export data to files')

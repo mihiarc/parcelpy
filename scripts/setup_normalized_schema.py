@@ -5,12 +5,8 @@ This script creates a new normalized schema with separate tables for different t
 Aligned with schema.json and actual GeoJSON field structure.
 """
 
-import sys
 from pathlib import Path
 from sqlalchemy import text
-
-# Add the src directory to the Python path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from parcelpy.database.core.database_manager import DatabaseManager
 

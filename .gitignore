@@ -108,3 +108,5 @@ temp/
 # Large data files
 *.sqlite*
 uv.lock
+coverage.xml
+parcelpy/database/.coverage.Chriss-Laptop.local.20352.XuMROcdx

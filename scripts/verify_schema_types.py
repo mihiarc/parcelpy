@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 """
-Verify schema field types against existing county tables.
-This script analyzes the current county tables and compares their column types
-with the proposed normalized schema.
+Verify database schema types and structure for ParcelPy.
+This script checks that the database schema matches expected types and constraints.
 """
 
-import sys
 import json
 from pathlib import Path
-from collections import defaultdict
-from sqlalchemy import text
-import pandas as pd
-
-# Add the src directory to the Python path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from sqlalchemy import text, inspect
 
 from parcelpy.database.core.database_manager import DatabaseManager
 

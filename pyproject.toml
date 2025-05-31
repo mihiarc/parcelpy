@@ -88,7 +88,7 @@ Repository = "https://github.com/yourusername/parcelpy"
 parcelpy-db = "parcelpy.database.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
 include = ["parcelpy*"]
 exclude = ["tests*", "docs*"]
 
@@ -126,7 +126,21 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=parcelpy --cov-report=html --cov-report=term-missing" 
+addopts = [
+    "--cov=parcelpy",
+    "--cov-report=html",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "-v"
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "performance: Performance tests",
+    "slow: Slow running tests",
+    "database: Tests requiring database connection",
+    "external: Tests requiring external services/APIs"
+]
 
 [dependency-groups]
 dev = [

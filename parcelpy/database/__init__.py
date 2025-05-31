@@ -1,8 +1,8 @@
 """
 ParcelPy Database Module
 
-A PostgreSQL with PostGIS-based database module for efficient storage and querying of parcel data.
-Provides high-performance analytics on geospatial parcel datasets.
+Core database functionality including PostgreSQL/PostGIS operations,
+data ingestion, analytics, and county-level data loading.
 """
 
 from .core.database_manager import DatabaseManager
@@ -15,6 +15,7 @@ from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
 from .crs_manager import DatabaseCRSManager, database_crs_manager
 from .config import get_connection_config, get_connection_url
+from .loaders.county_loader import CountyLoader, CountyLoadingConfig
 
 __version__ = "0.1.0"
 __all__ = [
@@ -29,5 +30,7 @@ __all__ = [
     "DatabaseCRSManager",
     "database_crs_manager",
     "get_connection_config",
-    "get_connection_url"
+    "get_connection_url",
+    "CountyLoader",
+    "CountyLoadingConfig"
 ] 

@@ -10,9 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "ParcelPy Development Team"}
+    {name = "ParcelPy Development Team", email = "dev@parcelpy.org"}
 ]
-keywords = ["gis", "parcels", "geospatial", "duckdb", "visualization"]
+keywords = ["gis", "parcels", "geospatial", "duckdb", "visualization", "real-estate", "postgis"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -20,10 +20,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
 
 # Core dependencies
@@ -69,23 +70,28 @@ earthengine = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "black",
-    "isort",
-    "flake8",
-    "mypy",
+    "pytest-mock>=3.10.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
 ]
 all = [
     "parcelpy[viz,streamlit,earthengine]"
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/parcelpy"
+Homepage = "https://github.com/YOUR_USERNAME/parcelpy"
 Documentation = "https://parcelpy.readthedocs.io"
-Repository = "https://github.com/yourusername/parcelpy"
-"Bug Tracker" = "https://github.com/yourusername/parcelpy/issues"
+Repository = "https://github.com/YOUR_USERNAME/parcelpy"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/parcelpy/issues"
+Changelog = "https://github.com/YOUR_USERNAME/parcelpy/blob/main/CHANGELOG.md"
 
 [project.scripts]
 parcelpy-db = "parcelpy.database.cli:main"
+parcelpy-analytics = "parcelpy.database.cli_analytics:main"
+parcelpy-census = "parcelpy.database.cli_census:main"
+parcelpy-address = "parcelpy.analytics.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -141,6 +147,24 @@ markers = [
     "database: Tests requiring database connection",
     "external: Tests requiring external services/APIs"
 ]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+strict_equality = true
 
 [dependency-groups]
 dev = [

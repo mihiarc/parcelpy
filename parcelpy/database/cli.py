@@ -17,6 +17,7 @@ from .core.parcel_db import ParcelDB
 from .core.spatial_queries import SpatialQueries
 from .utils.data_ingestion import DataIngestion
 from .utils.schema_manager import SchemaManager
+from .loaders.county_loader import CountyLoader, CountyLoadingConfig
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -231,6 +232,77 @@ def cmd_export(args):
         logger.error(f"Export failed: {e}")
 
 
+def cmd_load_counties(args):
+    """Load county data using the CountyLoader."""
+    try:
+        # Create configuration
+        config = CountyLoadingConfig(
+            batch_size=args.batch_size,
+            skip_loaded=not args.no_skip_loaded,
+            dry_run=args.dry_run,
+            data_directory=args.data_dir,
+            connection_string=f"postgresql://{args.user}:{args.password}@{args.host}:{args.port}/{args.database}" if args.user and args.password else None
+        )
+        
+        # Initialize county loader
+        loader = CountyLoader(config)
+        
+        if args.list_loaded:
+            loaded = loader.get_loaded_counties()
+            print(f"Counties already loaded ({len(loaded)}):")
+            for county in sorted(loaded):
+                print(f"  {county}")
+            return
+        
+        if args.list_available:
+            available = loader.get_available_counties()
+            print(f"Available county GeoJSON files ({len(available)}):")
+            for county in sorted(available):
+                file_info = loader.get_county_file_info(county)
+                size_mb = file_info['size_mb'] if file_info else 0
+                print(f"  {county}: {size_mb:.1f} MB")
+            return
+        
+        if args.status:
+            status = loader.get_loading_status()
+            summary = status['summary']
+            print(f"County Loading Status:")
+            print(f"  Total Available: {summary['total_available']}")
+            print(f"  Total Loaded: {summary['total_loaded']}")
+            print(f"  Remaining: {summary['remaining']}")
+            print(f"  Completion Rate: {summary['completion_rate']:.1f}%")
+            
+            if args.verbose:
+                print("\nDetailed Status:")
+                for county, info in sorted(status['counties'].items()):
+                    status_icon = "✓" if info['loaded'] else "○"
+                    print(f"  {status_icon} {county}: {info['file_size_mb']:.1f} MB")
+            return
+        
+        # Load counties
+        if args.counties:
+            results = loader.load_counties(args.counties)
+        else:
+            results = loader.load_all_counties()
+        
+        # Print results summary
+        successful = sum(1 for success in results.values() if success)
+        failed = len(results) - successful
+        
+        print(f"\nLoading Summary:")
+        print(f"  Successful: {successful}")
+        print(f"  Failed: {failed}")
+        
+        if failed > 0:
+            failed_counties = [county for county, success in results.items() if not success]
+            print(f"  Failed counties: {', '.join(failed_counties)}")
+        
+    except Exception as e:
+        print(f"Error loading counties: {e}")
+        logger.error(f"County loading failed: {e}")
+        sys.exit(1)
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -241,23 +313,23 @@ Examples:
   # Ingest parcel data
   python cli.py ingest data/parcels.parquet --host localhost --database parcels
   
-  # Ingest multiple files
-  python cli.py ingest data/nc_parcels/ --host localhost --database parcels --pattern "*.parquet"
+  # Load all counties (with smart skip logic)
+  python cli.py load-counties --host localhost --database parcels
+  
+  # Load specific counties
+  python cli.py load-counties --counties Wake Durham --host localhost --database parcels
+  
+  # Dry run to see what would be loaded
+  python cli.py load-counties --dry-run --host localhost --database parcels
+  
+  # List already loaded counties
+  python cli.py load-counties --list-loaded --host localhost --database parcels
+  
+  # Check loading status
+  python cli.py load-counties --status --host localhost --database parcels
   
   # Get database statistics
   python cli.py stats --host localhost --database parcels
-  
-  # Get table statistics
-  python cli.py stats --host localhost --database parcels --table parcels
-  
-  # Analyze table schema
-  python cli.py schema --host localhost --database parcels --table parcels --analyze
-  
-  # Standardize schema
-  python cli.py schema --host localhost --database parcels --table parcels --standardize
-  
-  # Execute query
-  python cli.py query --host localhost --database parcels --query "SELECT COUNT(*) FROM parcels"
   
   # Export data
   python cli.py export --host localhost --database parcels --table parcels --output parcels.parquet
@@ -282,6 +354,24 @@ Examples:
     ingest_parser.add_argument('--pattern', help='File pattern for directory ingestion (default: *.parquet)')
     ingest_parser.add_argument('--if-exists', choices=['replace', 'append'], default='replace',
                               help='What to do if table exists (default: replace)')
+    
+    # County loading command
+    county_parser = subparsers.add_parser('load-counties', help='Load county parcel data')
+    county_parser.add_argument('--counties', nargs='+', help='Specific counties to load (e.g., Wake Durham)')
+    county_parser.add_argument('--batch-size', type=int, default=1000, 
+                              help='Batch size for database inserts (default: 1000)')
+    county_parser.add_argument('--no-skip-loaded', action='store_true',
+                              help='Load all counties, even if already in database')
+    county_parser.add_argument('--dry-run', action='store_true',
+                              help='Show what would be loaded without actually loading')
+    county_parser.add_argument('--data-dir', default='data/nc_county_geojson',
+                              help='Directory containing county GeoJSON files')
+    county_parser.add_argument('--list-loaded', action='store_true',
+                              help='List counties already loaded in database')
+    county_parser.add_argument('--list-available', action='store_true',
+                              help='List available county GeoJSON files')
+    county_parser.add_argument('--status', action='store_true',
+                              help='Show loading status for all counties')
     
     # Query command
     query_parser = subparsers.add_parser('query', help='Execute SQL queries')
@@ -321,6 +411,7 @@ Examples:
     # Execute command
     command_map = {
         'ingest': cmd_ingest,
+        'load-counties': cmd_load_counties,
         'query': cmd_query,
         'stats': cmd_stats,
         'schema': cmd_schema,

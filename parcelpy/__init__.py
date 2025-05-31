@@ -6,10 +6,12 @@ ParcelPy provides tools for:
 - Geospatial visualization and analysis
 - Earth Engine integration for remote sensing analysis
 - Interactive web applications for data exploration
+- Address lookup and neighborhood analysis
 
 Modules:
     database: DuckDB-based database operations for parcel data
     viz: Visualization and analysis tools
+    analytics: Address lookup and neighborhood analysis
     streamlit_app: Web application components
     earthengine: Google Earth Engine integration
 """
@@ -24,18 +26,29 @@ try:
         ParcelDB,
         SpatialQueries,
         DataIngestion,
-        SchemaManager
+        SchemaManager,
+        CountyLoader,
+        CountyLoadingConfig
     )
     __all__ = [
         "DatabaseManager",
         "ParcelDB", 
         "SpatialQueries",
         "DataIngestion",
-        "SchemaManager"
+        "SchemaManager",
+        "CountyLoader",
+        "CountyLoadingConfig"
     ]
 except ImportError:
     # Database module not available - this is OK for some use cases
     __all__ = []
+
+# Analytics functionality - address lookup and neighborhood analysis
+try:
+    from .analytics import AddressLookup, NeighborhoodMapper
+    __all__.extend(["AddressLookup", "NeighborhoodMapper"])
+except ImportError:
+    pass
 
 # Optional imports - only available if dependencies are installed
 try:

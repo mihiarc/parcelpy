@@ -7,16 +7,12 @@ This script demonstrates the new integrated capabilities between the database an
 visualization modules, showcasing how to work with both data sources seamlessly.
 """
 
-import sys
 import logging
 from pathlib import Path
 import numpy as np
 
-# Add viz module to path
-sys.path.insert(0, str(Path(__file__).parent / "viz" / "src"))
-
-from enhanced_parcel_visualizer import EnhancedParcelVisualizer
-from database_integration import DatabaseDataLoader, DataBridge
+from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
+from parcelpy.viz.src.database_integration import DatabaseDataLoader, DataBridge
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

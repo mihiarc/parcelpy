@@ -7,12 +7,8 @@ This script performs basic tests to verify that the integration between
 the database and visualization modules is working correctly.
 """
 
-import sys
 import logging
 from pathlib import Path
-
-# Add viz module to path
-sys.path.insert(0, str(Path(__file__).parent / "viz" / "src"))
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -24,14 +20,14 @@ def test_imports():
     print("Testing imports...")
     
     try:
-        from enhanced_parcel_visualizer import EnhancedParcelVisualizer
+        from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
         print("✓ EnhancedParcelVisualizer imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import EnhancedParcelVisualizer: {e}")
         return False
     
     try:
-        from database_integration import DatabaseDataLoader, DataBridge, QueryBuilder
+        from parcelpy.viz.src.database_integration import DatabaseDataLoader, DataBridge, QueryBuilder
         print("✓ Database integration components imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import database integration: {e}")
@@ -39,8 +35,8 @@ def test_imports():
     
     try:
         # Test database module imports
-        from database.core.database_manager import DatabaseManager
-        from database.core.parcel_db import ParcelDB
+        from parcelpy.database.core.database_manager import DatabaseManager
+        from parcelpy.database.core.parcel_db import ParcelDB
         print("✓ Database module components imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import database module: {e}")
@@ -55,7 +51,7 @@ def test_query_builder():
     print("\nTesting QueryBuilder...")
     
     try:
-        from database_integration import QueryBuilder
+        from parcelpy.viz.src.database_integration import QueryBuilder
         
         # Test basic query building
         query = QueryBuilder.build_parcel_query(
@@ -113,7 +109,7 @@ def test_database_connection():
     print(f"Testing with database: {db_path}")
     
     try:
-        from database_integration import DatabaseDataLoader
+        from parcelpy.viz.src.database_integration import DatabaseDataLoader
         
         # Test database loader initialization
         loader = DatabaseDataLoader(db_path)
@@ -150,7 +146,7 @@ def test_enhanced_visualizer():
     print("\nTesting EnhancedParcelVisualizer...")
     
     try:
-        from enhanced_parcel_visualizer import EnhancedParcelVisualizer
+        from parcelpy.viz.src.enhanced_parcel_visualizer import EnhancedParcelVisualizer
         
         # Test initialization without database
         viz_no_db = EnhancedParcelVisualizer(output_dir="output/test")
@@ -181,7 +177,7 @@ def test_data_bridge():
     print("\nTesting DataBridge...")
     
     try:
-        from database_integration import DataBridge
+        from parcelpy.viz.src.database_integration import DataBridge
         
         # Test initialization
         db_files = list(Path(".").glob("*.duckdb"))
